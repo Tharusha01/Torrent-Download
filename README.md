@@ -2,6 +2,8 @@
 
 A web application to download torrents via magnet links and provide direct download links to users.
 
+![Torrent Downloader Screenshot](screenshots/Screenshot%202025-12-31%20222028.png)
+
 ## Features
 
 - 🧲 **Magnet Link Support**: Paste magnet links to start downloading
