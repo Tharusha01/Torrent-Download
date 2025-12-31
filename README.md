@@ -12,13 +12,63 @@ A web application to download torrents via magnet links and provide direct downl
 - 🔄 **WebSocket Updates**: Real-time updates without page refresh
 - 📱 **Responsive Design**: Works on desktop and mobile devices
 - 🎨 **Modern UI**: Clean, dark-themed interface
+- 🐳 **Docker Support**: Easy deployment with Docker
 
 ## Prerequisites
 
-- Node.js 16.x or higher
+### Local Development
+- Node.js 18.x or higher
 - npm or yarn
 
-## Installation
+### Docker Deployment
+- Docker 20.x or higher
+- Docker Compose v2.x or higher
+
+## Quick Start with Docker
+
+The easiest way to run the application:
+
+```bash
+# Clone the repository
+git clone https://github.com/Tharusha01/Torrent-Download.git
+cd Torrent-Download
+
+# Start with Docker Compose
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop the application
+docker-compose down
+```
+
+The application will be available at `http://localhost:3000`
+
+## Docker Commands
+
+```bash
+# Build the image
+docker build -t torrent-downloader .
+
+# Run container manually
+docker run -d \
+  --name torrent-downloader \
+  -p 3000:3000 \
+  -v $(pwd)/downloads:/app/downloads \
+  torrent-downloader
+
+# Stop container
+docker stop torrent-downloader
+
+# Remove container
+docker rm torrent-downloader
+
+# View logs
+docker logs -f torrent-downloader
+```
+
+## Local Installation
 
 1. Clone or navigate to the project directory:
    ```bash
@@ -63,6 +113,10 @@ A web application to download torrents via magnet links and provide direct downl
 Torent-downloader/
 ├── server.js          # Express server with WebTorrent
 ├── package.json       # Dependencies and scripts
+├── Dockerfile         # Docker image configuration
+├── docker-compose.yml # Docker Compose configuration
+├── .dockerignore      # Docker build exclusions
+├── .eslintrc.json     # ESLint configuration
 ├── public/            # Frontend files
 │   ├── index.html     # Main HTML page
 │   ├── style.css      # Styling
@@ -72,14 +126,22 @@ Torent-downloader/
 
 ## Configuration
 
-- **Port**: Default is 3000, can be changed via `PORT` environment variable
-- **Downloads Directory**: Files are saved to `./downloads` folder
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3000` | Server port |
+| `NODE_ENV` | `production` | Environment mode |
+| `CORS_ORIGIN` | `*` | Allowed CORS origins |
+
+Copy `.env.example` to `.env` to customize settings.
 
 ## Tech Stack
 
 - **Backend**: Node.js, Express.js
 - **Torrent Client**: WebTorrent
 - **Real-time Updates**: Socket.io
+- **Containerization**: Docker
 - **Frontend**: Vanilla JavaScript, CSS3
 
 ## Notes
