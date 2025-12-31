@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Torrent Downloader</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <i class="fas fa-magnet"></i>
+                <h1>Torrent Downloader</h1>
+            </div>
+            <p class="tagline">Download torrents directly to your browser</p>
+        </header>
+
+        <!-- Add Magnet Link Section -->
+        <section class="add-torrent">
+            <div class="input-group">
+                <i class="fas fa-link"></i>
+                <input type="text" id="magnetInput" placeholder="Paste magnet link here..." autocomplete="off">
+                <button id="addButton" class="btn btn-primary">
+                    <i class="fas fa-download"></i>
+                    <span>Add Torrent</span>
+                </button>
+            </div>
+            <div id="errorMessage" class="error-message"></div>
+        </section>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" data-tab="downloads">
+                <i class="fas fa-cloud-download-alt"></i>
+                Active Downloads
+                <span class="badge" id="downloadCount">0</span>
+            </button>
+            <button class="tab" data-tab="files">
+                <i class="fas fa-folder-open"></i>
+                My Files
+                <span class="badge" id="fileCount">0</span>
+            </button>
+        </div>
+
+        <!-- Downloads Tab -->
+        <section id="downloadsTab" class="tab-content active">
+            <div id="downloadsList" class="downloads-list">
+                <div class="empty-state">
+                    <i class="fas fa-cloud-download-alt"></i>
+                    <h3>No active downloads</h3>
+                    <p>Paste a magnet link above to start downloading</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Files Tab -->
+        <section id="filesTab" class="tab-content">
+            <div class="files-header">
+                <button id="refreshFiles" class="btn btn-secondary">
+                    <i class="fas fa-sync-alt"></i>
+                    Refresh
+                </button>
+            </div>
+            <div id="filesList" class="files-list">
+                <div class="empty-state">
+                    <i class="fas fa-folder-open"></i>
+                    <h3>No files yet</h3>
+                    <p>Completed downloads will appear here</p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

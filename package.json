@@ -1,0 +1,24 @@
+{
+  "name": "torrent-downloader",
+  "version": "1.0.0",
+  "description": "Web application to download torrents via magnet links",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "webtorrent": "^2.1.34",
+    "socket.io": "^4.7.2",
+    "uuid": "^9.0.0"
+  },
+  "keywords": [
+    "torrent",
+    "magnet",
+    "download"
+  ],
+  "author": "",
+  "license": "MIT"
+}
