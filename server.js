@@ -16,6 +16,7 @@ import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
+import { spawn } from 'child_process';
 
 // =============================================================================
 // CONFIGURATION
@@ -137,6 +138,49 @@ function isStreamable(ext) {
     const streamableTypes = ['.mp4', '.mkv', '.webm', '.mov', '.m4v', '.mp3', '.wav', '.ogg', '.m4a'];
     return streamableTypes.includes(ext.toLowerCase());
 }
+
+/**
+ * Browser-native supported formats (no transcoding needed)
+ */
+const NATIVE_FORMATS = ['.mp4', '.webm', '.ogg', '.mp3', '.wav', '.m4a'];
+
+/**
+ * Formats that require transcoding for browser playback
+ */
+const TRANSCODE_FORMATS = ['.mkv', '.avi', '.mov', '.wmv', '.flv', '.m4v', '.3gp', '.flac', '.wma'];
+
+/**
+ * Checks if format needs transcoding for browser playback
+ * @param {string} ext - File extension
+ * @returns {boolean} True if transcoding is needed
+ */
+function needsTranscoding(ext) {
+    return TRANSCODE_FORMATS.includes(ext.toLowerCase());
+}
+
+/**
+ * Checks if FFmpeg is available
+ * @returns {Promise<boolean>} True if FFmpeg is available
+ */
+async function checkFFmpeg() {
+    return new Promise((resolve) => {
+        const ffmpegProcess = spawn('ffmpeg', ['-version']);
+        ffmpegProcess.on('error', () => resolve(false));
+        ffmpegProcess.on('close', (code) => resolve(code === 0));
+    });
+}
+
+// Check FFmpeg availability on startup
+let ffmpegAvailable = false;
+checkFFmpeg().then((available) => {
+    ffmpegAvailable = available;
+    if (available) {
+        console.log('✓ FFmpeg detected - transcoding enabled for unsupported formats');
+    } else {
+        console.log('⚠ FFmpeg not found - some media formats may not play in browser');
+        console.log('  Install FFmpeg for full format support: https://ffmpeg.org/download.html');
+    }
+});
 
 // =============================================================================
 // HELPER FUNCTIONS
@@ -360,6 +404,137 @@ function setupTorrentEventHandlers(downloadId, torrent) {
 // =============================================================================
 // STREAMING ROUTES
 // =============================================================================
+
+/**
+ * GET /transcode/*
+ * Transcodes unsupported formats to browser-compatible format using FFmpeg
+ */
+app.get('/transcode/*', (req, res) => {
+    try {
+        const filePath = decodeURIComponent(req.params[0]);
+        const fullPath = path.join(CONFIG.DOWNLOADS_DIR, filePath);
+        
+        // Security: Prevent directory traversal
+        const normalizedPath = path.normalize(fullPath);
+        if (!normalizedPath.startsWith(CONFIG.DOWNLOADS_DIR)) {
+            return res.status(HTTP_STATUS.BAD_REQUEST).json({ 
+                error: 'Invalid file path' 
+            });
+        }
+        
+        // Check if file exists
+        if (!fs.existsSync(fullPath)) {
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ 
+                error: 'File not found' 
+            });
+        }
+        
+        // Check if FFmpeg is available
+        if (!ffmpegAvailable) {
+            return res.status(HTTP_STATUS.INTERNAL_ERROR).json({ 
+                error: 'FFmpeg not available for transcoding' 
+            });
+        }
+        
+        const ext = path.extname(fullPath).toLowerCase();
+        const isVideo = ['.mkv', '.avi', '.mov', '.wmv', '.flv', '.m4v', '.3gp'].includes(ext);
+        const isAudio = ['.flac', '.wma', '.aac'].includes(ext);
+        
+        if (isVideo) {
+            // Transcode video to MP4/H.264 for browser compatibility
+            res.setHeader('Content-Type', 'video/mp4');
+            res.setHeader('Transfer-Encoding', 'chunked');
+            
+            const ffmpegProcess = spawn('ffmpeg', [
+                '-i', fullPath,
+                '-c:v', 'libx264',
+                '-preset', 'ultrafast',
+                '-tune', 'zerolatency',
+                '-crf', '23',
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-movflags', 'frag_keyframe+empty_moov+faststart',
+                '-f', 'mp4',
+                '-'
+            ]);
+            
+            ffmpegProcess.stdout.pipe(res);
+            
+            ffmpegProcess.stderr.on('data', (data) => {
+                // FFmpeg logs to stderr, we can ignore or log for debugging
+                // console.log('FFmpeg:', data.toString());
+            });
+            
+            ffmpegProcess.on('error', (err) => {
+                console.error('FFmpeg error:', err.message);
+                if (!res.headersSent) {
+                    res.status(HTTP_STATUS.INTERNAL_ERROR).json({ 
+                        error: 'Transcoding failed' 
+                    });
+                }
+            });
+            
+            ffmpegProcess.on('close', (code) => {
+                if (code !== 0 && !res.headersSent) {
+                    console.error('FFmpeg exited with code:', code);
+                }
+            });
+            
+            // Kill FFmpeg if client disconnects
+            req.on('close', () => {
+                ffmpegProcess.kill('SIGTERM');
+            });
+            
+        } else if (isAudio) {
+            // Transcode audio to MP3 for browser compatibility
+            res.setHeader('Content-Type', 'audio/mpeg');
+            res.setHeader('Transfer-Encoding', 'chunked');
+            
+            const ffmpegProcess = spawn('ffmpeg', [
+                '-i', fullPath,
+                '-c:a', 'libmp3lame',
+                '-b:a', '192k',
+                '-f', 'mp3',
+                '-'
+            ]);
+            
+            ffmpegProcess.stdout.pipe(res);
+            
+            ffmpegProcess.stderr.on('data', () => {});
+            
+            ffmpegProcess.on('error', (err) => {
+                console.error('FFmpeg error:', err.message);
+                if (!res.headersSent) {
+                    res.status(HTTP_STATUS.INTERNAL_ERROR).json({ 
+                        error: 'Transcoding failed' 
+                    });
+                }
+            });
+            
+            req.on('close', () => {
+                ffmpegProcess.kill('SIGTERM');
+            });
+        } else {
+            // Format not supported for transcoding
+            res.status(HTTP_STATUS.BAD_REQUEST).json({ 
+                error: 'Format not supported for transcoding' 
+            });
+        }
+    } catch (error) {
+        console.error('Transcoding error:', error.message);
+        res.status(HTTP_STATUS.INTERNAL_ERROR).json({ 
+            error: 'Failed to transcode file' 
+        });
+    }
+});
+
+/**
+ * GET /api/ffmpeg-status
+ * Returns FFmpeg availability status
+ */
+app.get('/api/ffmpeg-status', (req, res) => {
+    res.json({ available: ffmpegAvailable });
+});
 
 /**
  * GET /stream/*

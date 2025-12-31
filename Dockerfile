@@ -22,6 +22,9 @@ LABEL maintainer="Tharusha"
 LABEL description="Web application to download torrents via magnet links"
 LABEL version="1.0.0"
 
+# Install FFmpeg for media transcoding
+RUN apk add --no-cache ffmpeg
+
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S torrent -u 1001 -G nodejs

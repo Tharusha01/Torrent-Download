@@ -604,6 +604,10 @@ body {
     border-left: 4px solid var(--primary-color);
 }
 
+.toast.warning {
+    border-left: 4px solid #f59e0b;
+}
+
 .toast i {
     font-size: 1.25rem;
 }
@@ -618,6 +622,10 @@ body {
 
 .toast.info i {
     color: var(--primary-color);
+}
+
+.toast.warning i {
+    color: #f59e0b;
 }
 
 .toast-message {
@@ -799,6 +807,12 @@ body {
     background: var(--bg-tertiary);
 }
 
+.modal-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
 .modal-title {
     display: flex;
     align-items: center;
@@ -846,6 +860,52 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+    position: relative;
+}
+
+/* Plyr Customization */
+.player-container .plyr {
+    width: 100%;
+    --plyr-color-main: var(--primary-color);
+    --plyr-video-background: #000;
+    --plyr-menu-background: var(--bg-secondary);
+    --plyr-menu-color: var(--text-primary);
+    --plyr-menu-border-color: var(--border-color);
+    --plyr-menu-radius: 8px;
+    --plyr-menu-shadow: var(--card-shadow);
+    --plyr-tooltip-background: var(--bg-tertiary);
+    --plyr-tooltip-color: var(--text-primary);
+    --plyr-tooltip-radius: 4px;
+    --plyr-badge-background: var(--primary-color);
+    --plyr-captions-background: rgba(0, 0, 0, 0.8);
+    --plyr-captions-text-color: #fff;
+    --plyr-control-spacing: 10px;
+    --plyr-font-family: inherit;
+}
+
+.player-container .plyr__video-wrapper {
+    max-height: 70vh;
+}
+
+.player-container .plyr--video {
+    border-radius: 0;
+}
+
+.player-container .plyr__controls {
+    padding: 15px 15px 10px;
+}
+
+.player-container .plyr__menu__container {
+    background: var(--bg-secondary);
+}
+
+.player-container .plyr__menu__container .plyr__control {
+    color: var(--text-primary);
+}
+
+.player-container .plyr__menu__container .plyr__control:hover,
+.player-container .plyr__menu__container .plyr__control[aria-expanded="true"] {
+    background: var(--bg-tertiary);
 }
 
 #videoPlayer {
@@ -952,5 +1012,140 @@ body {
         min-width: 80px;
         justify-content: center;
     }
+    
+    .modal-header-actions .btn-text {
+        display: none;
+    }
 }
 
+/* Subtitle Modal */
+.subtitle-modal-content {
+    width: 90vw;
+    max-width: 500px;
+}
+
+.subtitle-content {
+    padding: 1.5rem;
+}
+
+.subtitle-upload-zone {
+    border: 2px dashed var(--border-color);
+    border-radius: 12px;
+    padding: 2rem;
+    text-align: center;
+    transition: all 0.3s;
+    margin-bottom: 1.5rem;
+}
+
+.subtitle-upload-zone:hover,
+.subtitle-upload-zone.drag-over {
+    border-color: var(--primary-color);
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.subtitle-upload-zone i {
+    font-size: 3rem;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+.subtitle-upload-zone p {
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+.subtitle-upload-zone span {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.subtitle-upload-zone label {
+    margin-top: 1rem;
+}
+
+.subtitle-formats {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    opacity: 0.7;
+    margin-top: 1rem !important;
+}
+
+.subtitle-list {
+    margin-bottom: 1.5rem;
+}
+
+.subtitle-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    margin-bottom: 0.5rem;
+}
+
+.subtitle-item-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.subtitle-item-info i {
+    color: var(--success-color);
+}
+
+.subtitle-item-name {
+    font-size: 0.875rem;
+    color: var(--text-primary);
+}
+
+.subtitle-item-lang {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    padding: 0.2rem 0.5rem;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+}
+
+.subtitle-item-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.subtitle-url-section {
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.subtitle-url-section p {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+}
+
+.subtitle-url-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.subtitle-select {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    cursor: pointer;
+}
+
+.subtitle-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.subtitle-select option {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}

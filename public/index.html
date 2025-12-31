@@ -1,17 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Download torrents via magnet links directly in your browser">
     <meta name="theme-color" content="#6366f1">
     <title>Torrent Downloader</title>
+    <!-- Plyr CSS -->
+    <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" 
-          integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" 
-          crossorigin="anonymous" 
-          referrerpolicy="no-referrer">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+        integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw=="
+        crossorigin="anonymous" referrerpolicy="no-referrer">
 </head>
+
 <body>
     <div class="container">
         <!-- Header -->
@@ -28,14 +31,8 @@
             <form id="magnetForm" class="input-group" onsubmit="return false;">
                 <label for="magnetInput" class="visually-hidden">Magnet Link</label>
                 <i class="fas fa-link" aria-hidden="true"></i>
-                <input 
-                    type="text" 
-                    id="magnetInput" 
-                    placeholder="Paste magnet link here..." 
-                    autocomplete="off"
-                    aria-describedby="errorMessage"
-                    spellcheck="false"
-                >
+                <input type="text" id="magnetInput" placeholder="Paste magnet link here..." autocomplete="off"
+                    aria-describedby="errorMessage" spellcheck="false">
                 <button id="addButton" type="submit" class="btn btn-primary">
                     <i class="fas fa-download" aria-hidden="true"></i>
                     <span>Add Torrent</span>
@@ -46,7 +43,8 @@
 
         <!-- Tabs -->
         <nav class="tabs" role="tablist" aria-label="Content sections">
-            <button class="tab active" data-tab="downloads" role="tab" aria-selected="true" aria-controls="downloadsTab">
+            <button class="tab active" data-tab="downloads" role="tab" aria-selected="true"
+                aria-controls="downloadsTab">
                 <i class="fas fa-cloud-download-alt" aria-hidden="true"></i>
                 Active Downloads
                 <span class="badge" id="downloadCount" aria-label="Download count">0</span>
@@ -99,18 +97,18 @@
                     <i class="fas fa-play-circle" aria-hidden="true"></i>
                     <span id="playerFileName">Now Playing</span>
                 </h2>
-                <button class="modal-close" onclick="closePlayer()" aria-label="Close player">
-                    <i class="fas fa-times"></i>
-                </button>
+                <div class="modal-header-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="openSubtitlePicker()" title="Add Subtitles">
+                        <i class="fas fa-closed-captioning"></i>
+                        <span class="btn-text">Subtitles</span>
+                    </button>
+                    <button class="modal-close" onclick="closePlayer()" aria-label="Close player">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
             </div>
             <div class="player-container">
-                <video 
-                    id="videoPlayer" 
-                    controls 
-                    autoplay
-                    crossorigin="anonymous"
-                    preload="metadata"
-                >
+                <video id="videoPlayer" crossorigin="anonymous" preload="metadata" playsinline>
                     Your browser does not support video playback.
                 </video>
             </div>
@@ -120,14 +118,6 @@
                     <span id="playerFormat"></span>
                 </div>
                 <div class="player-actions">
-                    <button class="btn btn-secondary btn-sm" onclick="toggleFullscreen()" title="Fullscreen">
-                        <i class="fas fa-expand"></i>
-                        Fullscreen
-                    </button>
-                    <button class="btn btn-secondary btn-sm" onclick="togglePictureInPicture()" title="Picture in Picture">
-                        <i class="fas fa-external-link-square-alt"></i>
-                        PiP
-                    </button>
                     <a id="playerDownloadBtn" href="#" class="btn btn-success btn-sm" download>
                         <i class="fas fa-download"></i>
                         Download
@@ -137,7 +127,56 @@
         </div>
     </div>
 
+    <!-- Subtitle Upload Modal -->
+    <div id="subtitleModal" class="modal subtitle-modal" role="dialog" aria-labelledby="subtitleTitle"
+        aria-hidden="true">
+        <div class="modal-overlay" onclick="closeSubtitleModal()"></div>
+        <div class="modal-content subtitle-modal-content">
+            <div class="modal-header">
+                <h2 id="subtitleTitle" class="modal-title">
+                    <i class="fas fa-closed-captioning" aria-hidden="true"></i>
+                    Add Subtitles
+                </h2>
+                <button class="modal-close" onclick="closeSubtitleModal()" aria-label="Close">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="subtitle-content">
+                <div class="subtitle-upload-zone" id="subtitleDropZone">
+                    <i class="fas fa-file-alt"></i>
+                    <p>Drag & drop subtitle file here</p>
+                    <span>or</span>
+                    <label class="btn btn-primary btn-sm">
+                        <i class="fas fa-folder-open"></i>
+                        Browse Files
+                        <input type="file" id="subtitleFileInput" accept=".vtt,.srt,.ass,.ssa" hidden>
+                    </label>
+                    <p class="subtitle-formats">Supports: VTT, SRT, ASS, SSA</p>
+                </div>
+                <div id="subtitleList" class="subtitle-list">
+                    <!-- Loaded subtitles will appear here -->
+                </div>
+                <div class="subtitle-url-section">
+                    <p>Or load from torrent files:</p>
+                    <select id="torrentSubtitleSelect" class="subtitle-select">
+                        <option value="">Select subtitle from downloads...</option>
+                    </select>
+                    <button class="btn btn-primary btn-sm" onclick="loadSelectedSubtitle()">
+                        <i class="fas fa-plus"></i>
+                        Add
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden file input for subtitles -->
+    <input type="file" id="hiddenSubtitleInput" accept=".vtt,.srt,.ass,.ssa" hidden>
+
     <script src="/socket.io/socket.io.js"></script>
+    <!-- Plyr JS -->
+    <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
     <script src="script.js"></script>
 </body>
+
 </html>

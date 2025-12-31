@@ -13,16 +13,23 @@ A web application to download torrents via magnet links and provide direct downl
 - 📱 **Responsive Design**: Works on desktop and mobile devices
 - 🎨 **Modern UI**: Clean, dark-themed interface
 - 🐳 **Docker Support**: Easy deployment with Docker
+- 🎬 **Advanced Media Player**: Feature-rich Plyr-based video/audio player
+- 📝 **Subtitle Support**: Load VTT, SRT, ASS, SSA subtitles with auto-conversion
+- ⏩ **Playback Controls**: Speed control, seeking, keyboard shortcuts
+- 🖼️ **Picture-in-Picture**: Watch while browsing
+- 🔄 **FFmpeg Transcoding**: Automatic transcoding for unsupported formats (MKV, AVI, etc.)
 
 ## Prerequisites
 
 ### Local Development
 - Node.js 18.x or higher
 - npm or yarn
+- FFmpeg (optional, for transcoding unsupported media formats)
 
 ### Docker Deployment
 - Docker 20.x or higher
 - Docker Compose v2.x or higher
+- (FFmpeg is included in the Docker image)
 
 ## Quick Start with Docker
 
@@ -95,7 +102,50 @@ docker logs -f torrent-downloader
 1. **Add a Torrent**: Paste a magnet link in the input field and click "Add Torrent"
 2. **Monitor Progress**: Watch the download progress in real-time
 3. **Download Files**: Once complete, click the download button next to each file
-4. **Manage Downloads**: Remove downloads using the trash icon
+4. **Play Media**: Click the play button on video/audio files to stream them directly
+5. **Add Subtitles**: Click the subtitles button to load VTT, SRT, ASS, or SSA files
+6. **Manage Downloads**: Remove downloads using the trash icon
+
+## Media Player Features
+
+The built-in **Plyr-based** media player includes:
+
+### Playback Controls
+- ▶️ Play/Pause with large center button
+- ⏪ Rewind 10 seconds / Fast Forward 10 seconds
+- 🎚️ Volume control with mute toggle
+- 📊 Progress bar with seek preview
+- ⏱️ Current time and duration display
+
+### Advanced Features
+- ⚡ **Playback Speed**: 0.5x, 0.75x, 1x, 1.25x, 1.5x, 1.75x, 2x
+- 📝 **Subtitles**: Load VTT, SRT, ASS, SSA files (auto-converted to VTT)
+- 🔄 **Loop**: Toggle loop playback
+- 🖼️ **Picture-in-Picture**: Watch while browsing other content
+- 📺 **Fullscreen**: Full screen mode with controls
+- ⌨️ **Keyboard Shortcuts**: Space (play/pause), arrows (seek), M (mute), F (fullscreen)
+
+### Subtitle Support
+- **Drag & Drop**: Drop subtitle files directly onto the player
+- **File Browser**: Select subtitle files from your computer
+- **Torrent Files**: Load subtitles from downloaded torrent files
+- **Auto-Detection**: Automatic language detection from filename
+- **Format Conversion**: Automatic SRT/ASS/SSA to VTT conversion
+
+### Supported Formats
+
+#### Native Browser Formats (No FFmpeg required)
+- **Video**: MP4, WebM
+- **Audio**: MP3, WAV, OGG, M4A
+
+#### Transcoded Formats (Requires FFmpeg)
+- **Video**: MKV, AVI, MOV, WMV, FLV, M4V, 3GP
+- **Audio**: FLAC, WMA, AAC
+
+**Note**: For local development, install FFmpeg to enable transcoding:
+- **Windows**: Download from [ffmpeg.org](https://ffmpeg.org/download.html) or use `winget install ffmpeg`
+- **macOS**: `brew install ffmpeg`
+- **Linux**: `apt install ffmpeg` or `yum install ffmpeg`
 
 ## API Endpoints
 

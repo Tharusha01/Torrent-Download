@@ -39,6 +39,16 @@ const AUDIO_EXTENSIONS = Object.freeze([
     'mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'wma'
 ]);
 
+/** Browser-native supported formats (no transcoding needed) */
+const NATIVE_FORMATS = Object.freeze([
+    'mp4', 'webm', 'ogg', 'mp3', 'wav', 'm4a'
+]);
+
+/** Formats that require transcoding for browser playback */
+const TRANSCODE_FORMATS = Object.freeze([
+    'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v', '3gp', 'flac', 'wma', 'aac'
+]);
+
 /** File type icon mappings */
 const FILE_ICONS = Object.freeze({
     // Video
@@ -97,6 +107,7 @@ const TOAST_ICONS = Object.freeze({
     success: 'fa-check-circle',
     error: 'fa-exclamation-circle',
     info: 'fa-info-circle',
+    warning: 'fa-exclamation-triangle',
 });
 
 // =============================================================================
@@ -123,6 +134,12 @@ const elements = {
     playerFileSize: document.getElementById('playerFileSize'),
     playerFormat: document.getElementById('playerFormat'),
     playerDownloadBtn: document.getElementById('playerDownloadBtn'),
+    // Subtitle elements
+    subtitleModal: document.getElementById('subtitleModal'),
+    subtitleDropZone: document.getElementById('subtitleDropZone'),
+    subtitleFileInput: document.getElementById('subtitleFileInput'),
+    subtitleList: document.getElementById('subtitleList'),
+    torrentSubtitleSelect: document.getElementById('torrentSubtitleSelect'),
 };
 
 // =============================================================================
@@ -134,6 +151,10 @@ const state = {
     downloads: new Map(),
     socket: null,
     currentlyPlaying: null,
+    transcodingAttempted: false,
+    plyrInstance: null,
+    loadedSubtitles: [],
+    allFiles: [],
 };
 
 // =============================================================================
@@ -240,6 +261,35 @@ function isAudio(filename) {
  */
 function getStreamUrl(filePath) {
     return `/stream/${encodeURIComponent(filePath)}`;
+}
+
+/**
+ * Gets the transcode URL for a file
+ * @param {string} filePath - The file path
+ * @returns {string} Transcode URL
+ */
+function getTranscodeUrl(filePath) {
+    return `/transcode/${encodeURIComponent(filePath)}`;
+}
+
+/**
+ * Checks if a file format needs transcoding
+ * @param {string} filename - The filename
+ * @returns {boolean} True if transcoding is needed
+ */
+function needsTranscoding(filename) {
+    const ext = getFileExtension(filename);
+    return TRANSCODE_FORMATS.includes(ext);
+}
+
+/**
+ * Checks if a file format is natively supported by browsers
+ * @param {string} filename - The filename
+ * @returns {boolean} True if native format
+ */
+function isNativeFormat(filename) {
+    const ext = getFileExtension(filename);
+    return NATIVE_FORMATS.includes(ext);
 }
 
 // =============================================================================
@@ -631,6 +681,7 @@ async function removeDownload(id) {
 async function loadFiles() {
     try {
         const files = await apiRequest(APP_CONFIG.API_ENDPOINTS.FILES);
+        state.allFiles = files; // Store for subtitle selection
         renderFiles(files);
     } catch (error) {
         console.error('Failed to load files:', error);
@@ -807,43 +858,19 @@ function initialize() {
  * Initializes player event listeners
  */
 function initializePlayer() {
-    // Close player on Escape key
+    // Close modals on Escape key
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && elements.playerModal.classList.contains('active')) {
-            closePlayer();
-        }
-    });
-    
-    // Video error handling
-    elements.videoPlayer.addEventListener('error', (e) => {
-        const error = elements.videoPlayer.error;
-        let message = 'Error playing video';
-        
-        if (error) {
-            switch (error.code) {
-                case error.MEDIA_ERR_ABORTED:
-                    message = 'Playback aborted';
-                    break;
-                case error.MEDIA_ERR_NETWORK:
-                    message = 'Network error while loading';
-                    break;
-                case error.MEDIA_ERR_DECODE:
-                    message = 'Error decoding media';
-                    break;
-                case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
-                    message = 'Media format not supported. Try downloading the file instead.';
-                    break;
+        if (e.key === 'Escape') {
+            if (elements.subtitleModal && elements.subtitleModal.classList.contains('active')) {
+                closeSubtitleModal();
+            } else if (elements.playerModal.classList.contains('active')) {
+                closePlayer();
             }
         }
-        
-        showToast(message, 'error');
-        console.error('Video error:', error);
     });
     
-    // Update title when metadata is loaded
-    elements.videoPlayer.addEventListener('loadedmetadata', () => {
-        console.log('Media loaded successfully');
-    });
+    // Initialize subtitle drag and drop
+    initSubtitleDragDrop();
 }
 
 /**
@@ -852,30 +879,191 @@ function initializePlayer() {
  * @param {string} fileName - Name of the file
  * @param {number} fileSize - Size of the file in bytes
  */
-function openPlayer(filePath, fileName, fileSize) {
-    const streamUrl = getStreamUrl(filePath);
+async function openPlayer(filePath, fileName, fileSize) {
     const ext = getFileExtension(fileName).toUpperCase();
+    
+    // Determine the correct URL based on format support
+    let mediaUrl;
+    let formatNote = '';
+    
+    if (needsTranscoding(fileName)) {
+        // Check if FFmpeg is available for transcoding
+        try {
+            const response = await fetch('/api/ffmpeg-status');
+            const { available } = await response.json();
+            
+            if (available) {
+                mediaUrl = getTranscodeUrl(filePath);
+                formatNote = ' (Transcoding)';
+            } else {
+                // FFmpeg not available, try native playback anyway
+                mediaUrl = getStreamUrl(filePath);
+                showToast('warning', `${ext} format may not play - FFmpeg not installed for transcoding`);
+            }
+        } catch {
+            mediaUrl = getStreamUrl(filePath);
+        }
+    } else {
+        mediaUrl = getStreamUrl(filePath);
+    }
     
     // Update player info
     elements.playerFileName.textContent = fileName;
     elements.playerFileSize.textContent = formatBytes(fileSize);
-    elements.playerFormat.textContent = ext;
+    elements.playerFormat.textContent = ext + formatNote;
     elements.playerDownloadBtn.href = `/files/${encodeURIComponent(filePath)}`;
     
+    // Clear any existing subtitles
+    clearSubtitles();
+    
     // Set video source
-    elements.videoPlayer.src = streamUrl;
+    elements.videoPlayer.src = mediaUrl;
     
     // Store current file
     state.currentlyPlaying = { path: filePath, name: fileName, size: fileSize };
+    state.transcodingAttempted = false;
+    state.loadedSubtitles = [];
+    
+    // Initialize or reinitialize Plyr
+    initPlyr();
     
     // Show modal
     elements.playerModal.classList.add('active');
     elements.playerModal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
     
+    // Populate subtitle select with available subtitle files
+    populateSubtitleSelect();
+    
     // Start playing
-    elements.videoPlayer.play().catch((err) => {
-        console.warn('Autoplay prevented:', err.message);
+    if (state.plyrInstance) {
+        state.plyrInstance.play().catch((err) => {
+            console.warn('Autoplay prevented:', err.message);
+        });
+    }
+}
+
+/**
+ * Initialize Plyr player instance
+ */
+function initPlyr() {
+    // Destroy existing instance if any
+    if (state.plyrInstance) {
+        state.plyrInstance.destroy();
+        state.plyrInstance = null;
+    }
+    
+    // Initialize Plyr with enhanced options
+    state.plyrInstance = new Plyr(elements.videoPlayer, {
+        controls: [
+            'play-large',
+            'rewind',
+            'play',
+            'fast-forward',
+            'progress',
+            'current-time',
+            'duration',
+            'mute',
+            'volume',
+            'captions',
+            'settings',
+            'pip',
+            'airplay',
+            'fullscreen'
+        ],
+        settings: ['captions', 'quality', 'speed', 'loop'],
+        speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] },
+        keyboard: { focused: true, global: true },
+        tooltips: { controls: true, seek: true },
+        captions: { active: true, language: 'auto', update: true },
+        fullscreen: { enabled: true, fallback: true, iosNative: true },
+        storage: { enabled: true, key: 'plyr-torrent' },
+        seekTime: 10,
+        invertTime: false,
+        blankVideo: '',
+        quality: {
+            default: 'auto',
+            options: ['auto']
+        },
+        i18n: {
+            restart: 'Restart',
+            rewind: 'Rewind {seektime}s',
+            play: 'Play',
+            pause: 'Pause',
+            fastForward: 'Forward {seektime}s',
+            seek: 'Seek',
+            seekLabel: '{currentTime} of {duration}',
+            played: 'Played',
+            buffered: 'Buffered',
+            currentTime: 'Current time',
+            duration: 'Duration',
+            volume: 'Volume',
+            mute: 'Mute',
+            unmute: 'Unmute',
+            enableCaptions: 'Enable captions',
+            disableCaptions: 'Disable captions',
+            download: 'Download',
+            enterFullscreen: 'Enter fullscreen',
+            exitFullscreen: 'Exit fullscreen',
+            frameTitle: 'Player for {title}',
+            captions: 'Captions',
+            settings: 'Settings',
+            pip: 'PiP',
+            menuBack: 'Go back to previous menu',
+            speed: 'Speed',
+            normal: 'Normal',
+            quality: 'Quality',
+            loop: 'Loop',
+            start: 'Start',
+            end: 'End',
+            all: 'All',
+            reset: 'Reset',
+            disabled: 'Disabled',
+            enabled: 'Enabled',
+            advertisement: 'Ad',
+            qualityBadge: {
+                2160: '4K',
+                1440: 'HD',
+                1080: 'HD',
+                720: 'HD',
+                576: 'SD',
+                480: 'SD',
+            },
+        }
+    });
+    
+    // Handle errors with transcoding fallback
+    state.plyrInstance.on('error', async (event) => {
+        const error = elements.videoPlayer.error;
+        
+        if (error && error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+            if (state.currentlyPlaying && !state.transcodingAttempted) {
+                state.transcodingAttempted = true;
+                const { path: filePath, name: fileName } = state.currentlyPlaying;
+                
+                try {
+                    const response = await fetch('/api/ffmpeg-status');
+                    const { available } = await response.json();
+                    
+                    if (available) {
+                        showToast('info', 'Format not natively supported, trying transcoding...');
+                        elements.videoPlayer.src = getTranscodeUrl(filePath);
+                        elements.playerFormat.textContent = getFileExtension(fileName).toUpperCase() + ' (Transcoding)';
+                        state.plyrInstance.play().catch(() => {});
+                        return;
+                    }
+                } catch {
+                    // Ignore fetch errors
+                }
+                showToast('error', 'Media format not supported. Install FFmpeg for transcoding or download the file.');
+            }
+        }
+    });
+    
+    // Reset transcoding flag on successful load
+    state.plyrInstance.on('loadedmetadata', () => {
+        console.log('Media loaded successfully');
+        state.transcodingAttempted = false;
     });
 }
 
@@ -883,9 +1071,16 @@ function openPlayer(filePath, fileName, fileSize) {
  * Closes the video player
  */
 function closePlayer() {
-    // Pause and reset video
-    elements.videoPlayer.pause();
+    // Pause and destroy Plyr instance
+    if (state.plyrInstance) {
+        state.plyrInstance.pause();
+        state.plyrInstance.destroy();
+        state.plyrInstance = null;
+    }
+    
+    // Clear video source
     elements.videoPlayer.src = '';
+    clearSubtitles();
     
     // Hide modal
     elements.playerModal.classList.remove('active');
@@ -894,56 +1089,414 @@ function closePlayer() {
     
     // Clear state
     state.currentlyPlaying = null;
+    state.loadedSubtitles = [];
 }
 
 /**
- * Toggles fullscreen mode for the player
+ * Clears all subtitle tracks from video
  */
-function toggleFullscreen() {
-    const container = elements.videoPlayer;
+function clearSubtitles() {
+    const tracks = elements.videoPlayer.querySelectorAll('track');
+    tracks.forEach(track => track.remove());
+    state.loadedSubtitles = [];
+    updateSubtitleList();
+}
+
+// =============================================================================
+// SUBTITLE FUNCTIONS
+// =============================================================================
+
+/**
+ * Opens the subtitle picker modal
+ */
+function openSubtitlePicker() {
+    elements.subtitleModal.classList.add('active');
+    elements.subtitleModal.setAttribute('aria-hidden', 'false');
+    updateSubtitleList();
+}
+
+/**
+ * Closes the subtitle modal
+ */
+function closeSubtitleModal() {
+    elements.subtitleModal.classList.remove('active');
+    elements.subtitleModal.setAttribute('aria-hidden', 'true');
+}
+
+/**
+ * Initialize subtitle drag and drop
+ */
+function initSubtitleDragDrop() {
+    const dropZone = elements.subtitleDropZone;
     
-    if (!document.fullscreenElement) {
-        if (container.requestFullscreen) {
-            container.requestFullscreen();
-        } else if (container.webkitRequestFullscreen) {
-            container.webkitRequestFullscreen();
-        } else if (container.msRequestFullscreen) {
-            container.msRequestFullscreen();
-        }
-    } else {
-        if (document.exitFullscreen) {
-            document.exitFullscreen();
-        } else if (document.webkitExitFullscreen) {
-            document.webkitExitFullscreen();
-        } else if (document.msExitFullscreen) {
-            document.msExitFullscreen();
-        }
+    if (!dropZone) return;
+    
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+    });
+    
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => {
+            dropZone.classList.add('drag-over');
+        }, false);
+    });
+    
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => {
+            dropZone.classList.remove('drag-over');
+        }, false);
+    });
+    
+    dropZone.addEventListener('drop', handleSubtitleDrop, false);
+    
+    // File input change
+    if (elements.subtitleFileInput) {
+        elements.subtitleFileInput.addEventListener('change', (e) => {
+            const files = e.target.files;
+            if (files.length > 0) {
+                handleSubtitleFile(files[0]);
+            }
+        });
     }
 }
 
 /**
- * Toggles Picture-in-Picture mode
+ * Handle subtitle file drop
+ * @param {DragEvent} e - Drop event
  */
-async function togglePictureInPicture() {
-    try {
-        if (document.pictureInPictureElement) {
-            await document.exitPictureInPicture();
-        } else if (document.pictureInPictureEnabled) {
-            await elements.videoPlayer.requestPictureInPicture();
-        } else {
-            showToast('Picture-in-Picture not supported', 'error');
-        }
-    } catch (err) {
-        console.error('PiP error:', err);
-        showToast('Could not enter Picture-in-Picture mode', 'error');
+function handleSubtitleDrop(e) {
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+        handleSubtitleFile(files[0]);
     }
 }
 
-// Make player functions globally available
+/**
+ * Handle subtitle file (from drop or file input)
+ * @param {File} file - Subtitle file
+ */
+async function handleSubtitleFile(file) {
+    const validExtensions = ['vtt', 'srt', 'ass', 'ssa'];
+    const ext = file.name.split('.').pop().toLowerCase();
+    
+    if (!validExtensions.includes(ext)) {
+        showToast('error', 'Invalid subtitle format. Use VTT, SRT, ASS, or SSA.');
+        return;
+    }
+    
+    try {
+        let vttContent;
+        const content = await file.text();
+        
+        if (ext === 'srt') {
+            vttContent = convertSrtToVtt(content);
+        } else if (ext === 'ass' || ext === 'ssa') {
+            vttContent = convertAssToVtt(content);
+        } else {
+            vttContent = content;
+        }
+        
+        // Create blob URL for the VTT content
+        const blob = new Blob([vttContent], { type: 'text/vtt' });
+        const url = URL.createObjectURL(blob);
+        
+        // Detect language from filename
+        const lang = detectLanguageFromFilename(file.name);
+        
+        addSubtitleTrack(url, file.name, lang);
+        showToast('success', `Subtitle "${file.name}" added`);
+        
+    } catch (err) {
+        console.error('Error loading subtitle:', err);
+        showToast('error', 'Failed to load subtitle file');
+    }
+}
+
+/**
+ * Convert SRT to VTT format
+ * @param {string} srt - SRT content
+ * @returns {string} VTT content
+ */
+function convertSrtToVtt(srt) {
+    // Add WEBVTT header
+    let vtt = 'WEBVTT\n\n';
+    
+    // Replace SRT timestamps with VTT format
+    vtt += srt
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .replace(/(\d{2}):(\d{2}):(\d{2}),(\d{3})/g, '$1:$2:$3.$4');
+    
+    return vtt;
+}
+
+/**
+ * Convert ASS/SSA to VTT format (basic conversion)
+ * @param {string} ass - ASS/SSA content
+ * @returns {string} VTT content
+ */
+function convertAssToVtt(ass) {
+    let vtt = 'WEBVTT\n\n';
+    
+    const lines = ass.split('\n');
+    let inEvents = false;
+    
+    for (const line of lines) {
+        if (line.startsWith('[Events]')) {
+            inEvents = true;
+            continue;
+        }
+        
+        if (line.startsWith('[') && !line.startsWith('[Events]')) {
+            inEvents = false;
+            continue;
+        }
+        
+        if (inEvents && line.startsWith('Dialogue:')) {
+            // Parse dialogue line
+            const parts = line.substring(10).split(',');
+            if (parts.length >= 10) {
+                const start = convertAssTime(parts[1].trim());
+                const end = convertAssTime(parts[2].trim());
+                // Text is everything after the 9th comma, removing style tags
+                const text = parts.slice(9).join(',')
+                    .replace(/\{[^}]*\}/g, '') // Remove style tags
+                    .replace(/\\N/g, '\n')     // Convert line breaks
+                    .replace(/\\n/g, '\n')
+                    .trim();
+                
+                if (text) {
+                    vtt += `${start} --> ${end}\n${text}\n\n`;
+                }
+            }
+        }
+    }
+    
+    return vtt;
+}
+
+/**
+ * Convert ASS timestamp to VTT format
+ * @param {string} time - ASS time format (H:MM:SS.cc)
+ * @returns {string} VTT time format (HH:MM:SS.mmm)
+ */
+function convertAssTime(time) {
+    const parts = time.split(':');
+    if (parts.length !== 3) return '00:00:00.000';
+    
+    const hours = parts[0].padStart(2, '0');
+    const minutes = parts[1].padStart(2, '0');
+    const secParts = parts[2].split('.');
+    const seconds = secParts[0].padStart(2, '0');
+    const centiseconds = (secParts[1] || '0').padEnd(2, '0');
+    const milliseconds = centiseconds + '0';
+    
+    return `${hours}:${minutes}:${seconds}.${milliseconds}`;
+}
+
+/**
+ * Detect language from filename
+ * @param {string} filename - Filename
+ * @returns {string} Language code
+ */
+function detectLanguageFromFilename(filename) {
+    const langPatterns = {
+        'en': /\b(eng?|english)\b/i,
+        'es': /\b(spa?|spanish|español)\b/i,
+        'fr': /\b(fra?|french|français)\b/i,
+        'de': /\b(deu?|ger|german|deutsch)\b/i,
+        'it': /\b(ita?|italian|italiano)\b/i,
+        'pt': /\b(por?|portuguese|português)\b/i,
+        'ru': /\b(rus?|russian)\b/i,
+        'ja': /\b(jpn?|japanese|日本語)\b/i,
+        'ko': /\b(kor?|korean|한국어)\b/i,
+        'zh': /\b(chi?|chinese|中文)\b/i,
+        'ar': /\b(ara?|arabic)\b/i,
+        'hi': /\b(hin?|hindi)\b/i,
+    };
+    
+    for (const [code, pattern] of Object.entries(langPatterns)) {
+        if (pattern.test(filename)) {
+            return code;
+        }
+    }
+    
+    return 'en'; // Default to English
+}
+
+/**
+ * Add subtitle track to video
+ * @param {string} url - Subtitle URL or blob URL
+ * @param {string} label - Track label
+ * @param {string} lang - Language code
+ */
+function addSubtitleTrack(url, label, lang = 'en') {
+    // Create track element
+    const track = document.createElement('track');
+    track.kind = 'subtitles';
+    track.label = label;
+    track.srclang = lang;
+    track.src = url;
+    
+    // Set as default if first subtitle
+    if (state.loadedSubtitles.length === 0) {
+        track.default = true;
+    }
+    
+    elements.videoPlayer.appendChild(track);
+    
+    // Store reference
+    state.loadedSubtitles.push({ url, label, lang });
+    
+    // Update Plyr to recognize new track
+    if (state.plyrInstance) {
+        // Force Plyr to update captions
+        const currentTime = state.plyrInstance.currentTime;
+        state.plyrInstance.captions.active = true;
+        
+        // Update captions toggle
+        setTimeout(() => {
+            if (state.plyrInstance && state.plyrInstance.captions) {
+                state.plyrInstance.captions.toggle(true);
+            }
+        }, 100);
+    }
+    
+    updateSubtitleList();
+    closeSubtitleModal();
+}
+
+/**
+ * Update the subtitle list in the modal
+ */
+function updateSubtitleList() {
+    if (!elements.subtitleList) return;
+    
+    if (state.loadedSubtitles.length === 0) {
+        elements.subtitleList.innerHTML = '';
+        return;
+    }
+    
+    elements.subtitleList.innerHTML = state.loadedSubtitles.map((sub, index) => `
+        <div class="subtitle-item">
+            <div class="subtitle-item-info">
+                <i class="fas fa-closed-captioning"></i>
+                <span class="subtitle-item-name">${escapeHtml(sub.label)}</span>
+                <span class="subtitle-item-lang">${sub.lang.toUpperCase()}</span>
+            </div>
+            <div class="subtitle-item-actions">
+                <button class="btn btn-danger btn-sm" onclick="removeSubtitle(${index})" title="Remove">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+/**
+ * Remove a subtitle track
+ * @param {number} index - Index of subtitle to remove
+ */
+function removeSubtitle(index) {
+    if (index < 0 || index >= state.loadedSubtitles.length) return;
+    
+    // Remove track element
+    const tracks = elements.videoPlayer.querySelectorAll('track');
+    if (tracks[index]) {
+        // Revoke blob URL if applicable
+        const url = state.loadedSubtitles[index].url;
+        if (url.startsWith('blob:')) {
+            URL.revokeObjectURL(url);
+        }
+        tracks[index].remove();
+    }
+    
+    // Remove from state
+    state.loadedSubtitles.splice(index, 1);
+    updateSubtitleList();
+    
+    showToast('info', 'Subtitle removed');
+}
+
+/**
+ * Populate subtitle select with available subtitle files from downloads
+ */
+function populateSubtitleSelect() {
+    if (!elements.torrentSubtitleSelect) return;
+    
+    const subtitleExtensions = ['vtt', 'srt', 'ass', 'ssa', 'sub'];
+    const subtitleFiles = state.allFiles.filter(file => {
+        const ext = getFileExtension(file.name);
+        return subtitleExtensions.includes(ext);
+    });
+    
+    elements.torrentSubtitleSelect.innerHTML = '<option value="">Select subtitle from downloads...</option>';
+    
+    subtitleFiles.forEach(file => {
+        const option = document.createElement('option');
+        option.value = file.path;
+        option.textContent = file.name;
+        elements.torrentSubtitleSelect.appendChild(option);
+    });
+}
+
+/**
+ * Load selected subtitle from torrent downloads
+ */
+async function loadSelectedSubtitle() {
+    const select = elements.torrentSubtitleSelect;
+    if (!select || !select.value) {
+        showToast('warning', 'Please select a subtitle file');
+        return;
+    }
+    
+    const filePath = select.value;
+    const fileName = filePath.split('/').pop().split('\\').pop();
+    
+    try {
+        const response = await fetch(`/files/${encodeURIComponent(filePath)}`);
+        if (!response.ok) throw new Error('Failed to fetch subtitle');
+        
+        const content = await response.text();
+        const ext = getFileExtension(fileName);
+        
+        let vttContent;
+        if (ext === 'srt') {
+            vttContent = convertSrtToVtt(content);
+        } else if (ext === 'ass' || ext === 'ssa') {
+            vttContent = convertAssToVtt(content);
+        } else {
+            vttContent = content;
+        }
+        
+        const blob = new Blob([vttContent], { type: 'text/vtt' });
+        const url = URL.createObjectURL(blob);
+        const lang = detectLanguageFromFilename(fileName);
+        
+        addSubtitleTrack(url, fileName, lang);
+        showToast('success', `Subtitle "${fileName}" added`);
+        
+        // Reset select
+        select.value = '';
+        
+    } catch (err) {
+        console.error('Error loading subtitle:', err);
+        showToast('error', 'Failed to load subtitle file');
+    }
+}
+
+// Make player and subtitle functions globally available
 window.openPlayer = openPlayer;
 window.closePlayer = closePlayer;
-window.toggleFullscreen = toggleFullscreen;
-window.togglePictureInPicture = togglePictureInPicture;
+window.openSubtitlePicker = openSubtitlePicker;
+window.closeSubtitleModal = closeSubtitleModal;
+window.removeSubtitle = removeSubtitle;
+window.loadSelectedSubtitle = loadSelectedSubtitle;
 
 // Start application when DOM is ready
 if (document.readyState === 'loading') {
