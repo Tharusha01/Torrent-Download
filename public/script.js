@@ -129,7 +129,11 @@ const elements = {
     tabContents: document.querySelectorAll('.tab-content'),
     // Player elements
     playerModal: document.getElementById('playerModal'),
+    videoPlayerWrapper: document.getElementById('videoPlayerWrapper'),
+    audioPlayerWrapper: document.getElementById('audioPlayerWrapper'),
     videoPlayer: document.getElementById('videoPlayer'),
+    audioPlayer: document.getElementById('audioPlayer'),
+    audioVisualizer: document.getElementById('audioVisualizer'),
     playerFileName: document.getElementById('playerFileName'),
     playerFileSize: document.getElementById('playerFileSize'),
     playerFormat: document.getElementById('playerFormat'),
@@ -155,6 +159,7 @@ const state = {
     plyrInstance: null,
     loadedSubtitles: [],
     allFiles: [],
+    isAudioMode: false,
 };
 
 // =============================================================================
@@ -874,13 +879,16 @@ function initializePlayer() {
 }
 
 /**
- * Opens the video player with a file
+ * Opens the media player with a file
  * @param {string} filePath - Path to the file
  * @param {string} fileName - Name of the file
  * @param {number} fileSize - Size of the file in bytes
  */
 async function openPlayer(filePath, fileName, fileSize) {
     const ext = getFileExtension(fileName).toUpperCase();
+    const audioMode = isAudio(fileName);
+    
+    console.log('Opening player:', { filePath, fileName, fileSize, ext, audioMode });
     
     // Determine the correct URL based on format support
     let mediaUrl;
@@ -916,75 +924,116 @@ async function openPlayer(filePath, fileName, fileSize) {
     // Clear any existing subtitles
     clearSubtitles();
     
-    // Set video source
-    elements.videoPlayer.src = mediaUrl;
-    
-    // Store current file
+    // Store current file and mode
     state.currentlyPlaying = { path: filePath, name: fileName, size: fileSize };
     state.transcodingAttempted = false;
     state.loadedSubtitles = [];
+    state.isAudioMode = audioMode;
     
-    // Initialize or reinitialize Plyr
-    initPlyr();
+    // Clear both sources first
+    elements.videoPlayer.src = '';
+    elements.audioPlayer.src = '';
+    
+    // Initialize or reinitialize Plyr (this creates/updates the wrapper)
+    console.log('Initializing Plyr in', audioMode ? 'audio' : 'video', 'mode, source:', mediaUrl);
+    initPlyr(audioMode);
+    
+    // Set the source AFTER Plyr is initialized using Plyr's source API
+    const playerElement = audioMode ? elements.audioPlayer : elements.videoPlayer;
+    playerElement.src = mediaUrl;
+    playerElement.load(); // Force reload the source
+    
+    console.log('Player element after source set:', playerElement, 'src:', playerElement.src);
+    
+    // Show/hide the correct player wrappers
+    if (audioMode) {
+        elements.videoPlayerWrapper.style.display = 'none';
+        elements.audioPlayerWrapper.style.display = 'block';
+        elements.audioVisualizer.style.display = 'flex';
+    } else {
+        elements.audioPlayerWrapper.style.display = 'none';
+        elements.audioVisualizer.style.display = 'none';
+        elements.videoPlayerWrapper.style.display = 'block';
+    }
     
     // Show modal
     elements.playerModal.classList.add('active');
     elements.playerModal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
     
-    // Populate subtitle select with available subtitle files
-    populateSubtitleSelect();
+    // Populate subtitle select with available subtitle files (only for video)
+    if (!audioMode) {
+        populateSubtitleSelect();
+    }
     
-    // Start playing
+    // Start playing after a short delay to ensure everything is ready
     if (state.plyrInstance) {
-        state.plyrInstance.play().catch((err) => {
-            console.warn('Autoplay prevented:', err.message);
-        });
+        setTimeout(() => {
+            state.plyrInstance.play().catch((err) => {
+                console.warn('Autoplay prevented:', err.message);
+            });
+        }, 100);
     }
 }
 
 /**
  * Initialize Plyr player instance
+ * @param {boolean} audioMode - Whether to initialize audio or video player
  */
-function initPlyr() {
+function initPlyr(audioMode = false) {
     // Destroy existing instance if any
     if (state.plyrInstance) {
         state.plyrInstance.destroy();
         state.plyrInstance = null;
     }
     
+    // Select the correct player element
+    const playerElement = audioMode ? elements.audioPlayer : elements.videoPlayer;
+    console.log('Plyr target element:', playerElement, 'src:', playerElement.src);
+    
+    // Define controls based on mode
+    const controls = audioMode ? [
+        'rewind',
+        'play',
+        'fast-forward',
+        'progress',
+        'current-time',
+        'duration',
+        'mute',
+        'volume',
+        'settings'
+    ] : [
+        'play-large',
+        'rewind',
+        'play',
+        'fast-forward',
+        'progress',
+        'current-time',
+        'duration',
+        'mute',
+        'volume',
+        'captions',
+        'settings',
+        'pip',
+        'airplay',
+        'fullscreen'
+    ];
+    
+    // Settings based on mode
+    const settings = audioMode ? ['speed', 'loop'] : ['captions', 'quality', 'speed', 'loop'];
+    
     // Initialize Plyr with enhanced options
-    state.plyrInstance = new Plyr(elements.videoPlayer, {
-        controls: [
-            'play-large',
-            'rewind',
-            'play',
-            'fast-forward',
-            'progress',
-            'current-time',
-            'duration',
-            'mute',
-            'volume',
-            'captions',
-            'settings',
-            'pip',
-            'airplay',
-            'fullscreen'
-        ],
-        settings: ['captions', 'quality', 'speed', 'loop'],
+    state.plyrInstance = new Plyr(playerElement, {
+        controls,
+        settings,
         speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] },
         keyboard: { focused: true, global: true },
         tooltips: { controls: true, seek: true },
         captions: { active: true, language: 'auto', update: true },
-        fullscreen: { enabled: true, fallback: true, iosNative: true },
+        fullscreen: { enabled: !audioMode, fallback: true, iosNative: true },
         storage: { enabled: true, key: 'plyr-torrent' },
         seekTime: 10,
         invertTime: false,
-        blankVideo: '',
-        quality: {
-            default: 'auto',
-            options: ['auto']
-        },
         i18n: {
             restart: 'Restart',
             rewind: 'Rewind {seektime}s',
@@ -1034,7 +1083,8 @@ function initPlyr() {
     
     // Handle errors with transcoding fallback
     state.plyrInstance.on('error', async (event) => {
-        const error = elements.videoPlayer.error;
+        const mediaElement = audioMode ? elements.audioPlayer : elements.videoPlayer;
+        const error = mediaElement.error;
         
         if (error && error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
             if (state.currentlyPlaying && !state.transcodingAttempted) {
@@ -1047,7 +1097,7 @@ function initPlyr() {
                     
                     if (available) {
                         showToast('info', 'Format not natively supported, trying transcoding...');
-                        elements.videoPlayer.src = getTranscodeUrl(filePath);
+                        mediaElement.src = getTranscodeUrl(filePath);
                         elements.playerFormat.textContent = getFileExtension(fileName).toUpperCase() + ' (Transcoding)';
                         state.plyrInstance.play().catch(() => {});
                         return;
@@ -1065,10 +1115,20 @@ function initPlyr() {
         console.log('Media loaded successfully');
         state.transcodingAttempted = false;
     });
+    
+    // Debug: log when ready
+    state.plyrInstance.on('ready', () => {
+        console.log('Plyr is ready, audio mode:', audioMode);
+    });
+    
+    // Debug: log canplay
+    state.plyrInstance.on('canplay', () => {
+        console.log('Plyr can play');
+    });
 }
 
 /**
- * Closes the video player
+ * Closes the media player
  */
 function closePlayer() {
     // Pause and destroy Plyr instance
@@ -1078,9 +1138,15 @@ function closePlayer() {
         state.plyrInstance = null;
     }
     
-    // Clear video source
+    // Clear both video and audio sources
     elements.videoPlayer.src = '';
+    elements.audioPlayer.src = '';
     clearSubtitles();
+    
+    // Reset player visibility using wrappers
+    elements.videoPlayerWrapper.style.display = 'block';
+    elements.audioPlayerWrapper.style.display = 'none';
+    elements.audioVisualizer.style.display = 'none';
     
     // Hide modal
     elements.playerModal.classList.remove('active');
@@ -1090,6 +1156,7 @@ function closePlayer() {
     // Clear state
     state.currentlyPlaying = null;
     state.loadedSubtitles = [];
+    state.isAudioMode = false;
 }
 
 /**

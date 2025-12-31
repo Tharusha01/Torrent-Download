@@ -108,9 +108,22 @@
                 </div>
             </div>
             <div class="player-container">
-                <video id="videoPlayer" crossorigin="anonymous" preload="metadata" playsinline>
-                    Your browser does not support video playback.
-                </video>
+                <div id="videoPlayerWrapper" class="player-wrapper">
+                    <video id="videoPlayer" crossorigin="anonymous" preload="metadata" playsinline>
+                        Your browser does not support video playback.
+                    </video>
+                </div>
+                <div id="audioPlayerWrapper" class="player-wrapper" style="display: none;">
+                    <audio id="audioPlayer" crossorigin="anonymous" preload="metadata">
+                        Your browser does not support audio playback.
+                    </audio>
+                </div>
+                <div id="audioVisualizer" class="audio-visualizer" style="display: none;">
+                    <i class="fas fa-music"></i>
+                    <div class="audio-wave">
+                        <span></span><span></span><span></span><span></span><span></span>
+                    </div>
+                </div>
             </div>
             <div class="player-controls">
                 <div class="player-info">
