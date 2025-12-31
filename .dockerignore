@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Downloads (don't include in image, use volume)
+downloads/
+*.torrent
+
+# Git
+.git/
+.gitignore
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation
+README.md
+CHANGELOG.md
+LICENSE
+
+# Development files
+.eslintrc.json
+jsconfig.json
+*.md
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Test files
+test/
+tests/
+*.test.js
+*.spec.js
+coverage/
+
+# Misc
+*.log
+.npmrc
