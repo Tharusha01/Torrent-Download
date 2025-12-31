@@ -23,6 +23,22 @@ const APP_CONFIG = Object.freeze({
     },
 });
 
+/** Streamable media file extensions */
+const STREAMABLE_EXTENSIONS = Object.freeze([
+    'mp4', 'mkv', 'webm', 'mov', 'm4v', 'avi',
+    'mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'
+]);
+
+/** Video file extensions */
+const VIDEO_EXTENSIONS = Object.freeze([
+    'mp4', 'mkv', 'webm', 'mov', 'm4v', 'avi', 'wmv', 'flv'
+]);
+
+/** Audio file extensions */
+const AUDIO_EXTENSIONS = Object.freeze([
+    'mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'wma'
+]);
+
 /** File type icon mappings */
 const FILE_ICONS = Object.freeze({
     // Video
@@ -100,6 +116,13 @@ const elements = {
     toastContainer: document.getElementById('toastContainer'),
     tabs: document.querySelectorAll('.tab'),
     tabContents: document.querySelectorAll('.tab-content'),
+    // Player elements
+    playerModal: document.getElementById('playerModal'),
+    videoPlayer: document.getElementById('videoPlayer'),
+    playerFileName: document.getElementById('playerFileName'),
+    playerFileSize: document.getElementById('playerFileSize'),
+    playerFormat: document.getElementById('playerFormat'),
+    playerDownloadBtn: document.getElementById('playerDownloadBtn'),
 };
 
 // =============================================================================
@@ -110,6 +133,7 @@ const elements = {
 const state = {
     downloads: new Map(),
     socket: null,
+    currentlyPlaying: null,
 };
 
 // =============================================================================
@@ -168,6 +192,54 @@ function escapeHtml(text) {
  */
 function capitalize(str) {
     return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+/**
+ * Gets file extension from filename
+ * @param {string} filename - The filename
+ * @returns {string} File extension (lowercase, without dot)
+ */
+function getFileExtension(filename) {
+    return filename.split('.').pop().toLowerCase();
+}
+
+/**
+ * Checks if a file is streamable media
+ * @param {string} filename - The filename
+ * @returns {boolean} True if file can be streamed
+ */
+function isStreamable(filename) {
+    const ext = getFileExtension(filename);
+    return STREAMABLE_EXTENSIONS.includes(ext);
+}
+
+/**
+ * Checks if a file is a video
+ * @param {string} filename - The filename
+ * @returns {boolean} True if file is video
+ */
+function isVideo(filename) {
+    const ext = getFileExtension(filename);
+    return VIDEO_EXTENSIONS.includes(ext);
+}
+
+/**
+ * Checks if a file is audio
+ * @param {string} filename - The filename
+ * @returns {boolean} True if file is audio
+ */
+function isAudio(filename) {
+    const ext = getFileExtension(filename);
+    return AUDIO_EXTENSIONS.includes(ext);
+}
+
+/**
+ * Gets the stream URL for a file
+ * @param {string} filePath - The file path
+ * @returns {string} Stream URL
+ */
+function getStreamUrl(filePath) {
+    return `/stream/${encodeURIComponent(filePath)}`;
 }
 
 // =============================================================================
@@ -252,6 +324,14 @@ function createEmptyStateHtml(icon, title, description) {
  * @returns {string} HTML string
  */
 function createTorrentFileHtml(file) {
+    const canStream = isStreamable(file.name);
+    const playButton = canStream
+        ? `<button class="btn btn-play btn-sm" onclick="openPlayer('${escapeHtml(file.path)}', '${escapeHtml(file.name)}', ${file.size})" title="Play">
+               <i class="fas fa-play"></i>
+               Play
+           </button>`
+        : '';
+    
     const downloadButton = file.downloadUrl
         ? `<a href="${escapeHtml(file.downloadUrl)}" class="btn btn-success btn-sm" download>
                <i class="fas fa-download"></i>
@@ -266,6 +346,7 @@ function createTorrentFileHtml(file) {
                 <span class="torrent-file-name">${escapeHtml(file.name)}</span>
             </div>
             <span class="torrent-file-size">${formatBytes(file.size)}</span>
+            ${playButton}
             ${downloadButton}
         </div>
     `;
@@ -396,20 +477,35 @@ function renderFiles(files) {
         );
     } else {
         files.forEach((file) => {
+            const canStream = isStreamable(file.name);
+            const mediaType = isVideo(file.name) ? 'video' : (isAudio(file.name) ? 'audio' : '');
+            
             const item = document.createElement('div');
             item.className = 'file-item';
             item.innerHTML = `
-                <div class="file-icon">
+                <div class="file-icon ${canStream ? 'streamable' : ''}">
                     <i class="fas ${getFileIcon(file.name)}"></i>
+                    ${canStream ? '<span class="play-overlay"><i class="fas fa-play"></i></span>' : ''}
                 </div>
                 <div class="file-info">
                     <div class="file-name">${escapeHtml(file.name)}</div>
-                    <div class="file-size">${formatBytes(file.size)}</div>
+                    <div class="file-size">
+                        ${formatBytes(file.size)}
+                        ${mediaType ? `<span class="file-type">${mediaType.toUpperCase()}</span>` : ''}
+                    </div>
                 </div>
-                <a href="${escapeHtml(file.downloadUrl)}" class="btn btn-success btn-sm" download>
-                    <i class="fas fa-download"></i>
-                    Download
-                </a>
+                <div class="file-actions">
+                    ${canStream ? `
+                        <button class="btn btn-play btn-sm" onclick="openPlayer('${escapeHtml(file.path)}', '${escapeHtml(file.name)}', ${file.size})" title="Play ${mediaType}">
+                            <i class="fas fa-play"></i>
+                            Play
+                        </button>
+                    ` : ''}
+                    <a href="${escapeHtml(file.downloadUrl)}" class="btn btn-success btn-sm" download>
+                        <i class="fas fa-download"></i>
+                        Download
+                    </a>
+                </div>
             `;
             elements.filesList.appendChild(item);
         });
@@ -696,11 +792,158 @@ function initializeSocket() {
 function initialize() {
     initializeEventListeners();
     initializeSocket();
+    initializePlayer();
     loadDownloads();
     loadFiles();
     
     console.log('Torrent Downloader initialized');
 }
+
+// =============================================================================
+// VIDEO PLAYER FUNCTIONS
+// =============================================================================
+
+/**
+ * Initializes player event listeners
+ */
+function initializePlayer() {
+    // Close player on Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && elements.playerModal.classList.contains('active')) {
+            closePlayer();
+        }
+    });
+    
+    // Video error handling
+    elements.videoPlayer.addEventListener('error', (e) => {
+        const error = elements.videoPlayer.error;
+        let message = 'Error playing video';
+        
+        if (error) {
+            switch (error.code) {
+                case error.MEDIA_ERR_ABORTED:
+                    message = 'Playback aborted';
+                    break;
+                case error.MEDIA_ERR_NETWORK:
+                    message = 'Network error while loading';
+                    break;
+                case error.MEDIA_ERR_DECODE:
+                    message = 'Error decoding media';
+                    break;
+                case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                    message = 'Media format not supported. Try downloading the file instead.';
+                    break;
+            }
+        }
+        
+        showToast(message, 'error');
+        console.error('Video error:', error);
+    });
+    
+    // Update title when metadata is loaded
+    elements.videoPlayer.addEventListener('loadedmetadata', () => {
+        console.log('Media loaded successfully');
+    });
+}
+
+/**
+ * Opens the video player with a file
+ * @param {string} filePath - Path to the file
+ * @param {string} fileName - Name of the file
+ * @param {number} fileSize - Size of the file in bytes
+ */
+function openPlayer(filePath, fileName, fileSize) {
+    const streamUrl = getStreamUrl(filePath);
+    const ext = getFileExtension(fileName).toUpperCase();
+    
+    // Update player info
+    elements.playerFileName.textContent = fileName;
+    elements.playerFileSize.textContent = formatBytes(fileSize);
+    elements.playerFormat.textContent = ext;
+    elements.playerDownloadBtn.href = `/files/${encodeURIComponent(filePath)}`;
+    
+    // Set video source
+    elements.videoPlayer.src = streamUrl;
+    
+    // Store current file
+    state.currentlyPlaying = { path: filePath, name: fileName, size: fileSize };
+    
+    // Show modal
+    elements.playerModal.classList.add('active');
+    elements.playerModal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+    
+    // Start playing
+    elements.videoPlayer.play().catch((err) => {
+        console.warn('Autoplay prevented:', err.message);
+    });
+}
+
+/**
+ * Closes the video player
+ */
+function closePlayer() {
+    // Pause and reset video
+    elements.videoPlayer.pause();
+    elements.videoPlayer.src = '';
+    
+    // Hide modal
+    elements.playerModal.classList.remove('active');
+    elements.playerModal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    
+    // Clear state
+    state.currentlyPlaying = null;
+}
+
+/**
+ * Toggles fullscreen mode for the player
+ */
+function toggleFullscreen() {
+    const container = elements.videoPlayer;
+    
+    if (!document.fullscreenElement) {
+        if (container.requestFullscreen) {
+            container.requestFullscreen();
+        } else if (container.webkitRequestFullscreen) {
+            container.webkitRequestFullscreen();
+        } else if (container.msRequestFullscreen) {
+            container.msRequestFullscreen();
+        }
+    } else {
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+        } else if (document.msExitFullscreen) {
+            document.msExitFullscreen();
+        }
+    }
+}
+
+/**
+ * Toggles Picture-in-Picture mode
+ */
+async function togglePictureInPicture() {
+    try {
+        if (document.pictureInPictureElement) {
+            await document.exitPictureInPicture();
+        } else if (document.pictureInPictureEnabled) {
+            await elements.videoPlayer.requestPictureInPicture();
+        } else {
+            showToast('Picture-in-Picture not supported', 'error');
+        }
+    } catch (err) {
+        console.error('PiP error:', err);
+        showToast('Could not enter Picture-in-Picture mode', 'error');
+    }
+}
+
+// Make player functions globally available
+window.openPlayer = openPlayer;
+window.closePlayer = closePlayer;
+window.toggleFullscreen = toggleFullscreen;
+window.togglePictureInPicture = togglePictureInPicture;
 
 // Start application when DOM is ready
 if (document.readyState === 'loading') {

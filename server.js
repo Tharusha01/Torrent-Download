@@ -72,14 +72,71 @@ if (!fs.existsSync(CONFIG.DOWNLOADS_DIR)) {
 
 app.use(express.json({ limit: '10kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/files', express.static(CONFIG.DOWNLOADS_DIR));
+
+// Note: We handle /files routes manually for streaming support below
 
 // Security headers middleware
 app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     next();
 });
+
+// =============================================================================
+// MIME TYPES FOR MEDIA
+// =============================================================================
+
+/** Supported media MIME types */
+const MIME_TYPES = Object.freeze({
+    // Video
+    '.mp4': 'video/mp4',
+    '.mkv': 'video/x-matroska',
+    '.webm': 'video/webm',
+    '.avi': 'video/x-msvideo',
+    '.mov': 'video/quicktime',
+    '.wmv': 'video/x-ms-wmv',
+    '.flv': 'video/x-flv',
+    '.m4v': 'video/x-m4v',
+    '.3gp': 'video/3gpp',
+    '.ogv': 'video/ogg',
+    // Audio
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.flac': 'audio/flac',
+    '.aac': 'audio/aac',
+    '.ogg': 'audio/ogg',
+    '.m4a': 'audio/mp4',
+    '.wma': 'audio/x-ms-wma',
+    // Images
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+    // Documents
+    '.pdf': 'application/pdf',
+    '.txt': 'text/plain',
+});
+
+/**
+ * Gets MIME type for a file extension
+ * @param {string} ext - File extension
+ * @returns {string} MIME type
+ */
+function getMimeType(ext) {
+    return MIME_TYPES[ext.toLowerCase()] || 'application/octet-stream';
+}
+
+/**
+ * Checks if file is a streamable media type
+ * @param {string} ext - File extension
+ * @returns {boolean} True if streamable
+ */
+function isStreamable(ext) {
+    const streamableTypes = ['.mp4', '.mkv', '.webm', '.mov', '.m4v', '.mp3', '.wav', '.ogg', '.m4a'];
+    return streamableTypes.includes(ext.toLowerCase());
+}
 
 // =============================================================================
 // HELPER FUNCTIONS
@@ -299,6 +356,148 @@ function setupTorrentEventHandlers(downloadId, torrent) {
     
     progressIntervals.set(downloadId, progressInterval);
 }
+
+// =============================================================================
+// STREAMING ROUTES
+// =============================================================================
+
+/**
+ * GET /stream/*
+ * Streams media files with range request support for seeking
+ */
+app.get('/stream/*', (req, res) => {
+    try {
+        // Get file path from URL
+        const filePath = decodeURIComponent(req.params[0]);
+        const fullPath = path.join(CONFIG.DOWNLOADS_DIR, filePath);
+        
+        // Security: Prevent directory traversal
+        const normalizedPath = path.normalize(fullPath);
+        if (!normalizedPath.startsWith(CONFIG.DOWNLOADS_DIR)) {
+            return res.status(HTTP_STATUS.BAD_REQUEST).json({ 
+                error: 'Invalid file path' 
+            });
+        }
+        
+        // Check if file exists
+        if (!fs.existsSync(fullPath)) {
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ 
+                error: 'File not found' 
+            });
+        }
+        
+        const stat = fs.statSync(fullPath);
+        const fileSize = stat.size;
+        const ext = path.extname(fullPath);
+        const mimeType = getMimeType(ext);
+        
+        // Handle range requests for video seeking
+        const range = req.headers.range;
+        
+        if (range) {
+            // Parse range header
+            const parts = range.replace(/bytes=/, '').split('-');
+            const start = parseInt(parts[0], 10);
+            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+            
+            // Validate range
+            if (start >= fileSize || end >= fileSize) {
+                res.status(416).json({ error: 'Range not satisfiable' });
+                return;
+            }
+            
+            const chunkSize = (end - start) + 1;
+            
+            // Create read stream for the range
+            const stream = fs.createReadStream(fullPath, { start, end });
+            
+            // Set headers for partial content
+            res.writeHead(206, {
+                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                'Accept-Ranges': 'bytes',
+                'Content-Length': chunkSize,
+                'Content-Type': mimeType,
+                'Cache-Control': 'public, max-age=3600',
+            });
+            
+            stream.pipe(res);
+            
+            stream.on('error', (err) => {
+                console.error('Stream error:', err.message);
+                if (!res.headersSent) {
+                    res.status(HTTP_STATUS.INTERNAL_ERROR).json({ 
+                        error: 'Stream error' 
+                    });
+                }
+            });
+        } else {
+            // No range request - send entire file
+            res.writeHead(200, {
+                'Content-Length': fileSize,
+                'Content-Type': mimeType,
+                'Accept-Ranges': 'bytes',
+                'Cache-Control': 'public, max-age=3600',
+            });
+            
+            const stream = fs.createReadStream(fullPath);
+            stream.pipe(res);
+            
+            stream.on('error', (err) => {
+                console.error('Stream error:', err.message);
+                if (!res.headersSent) {
+                    res.status(HTTP_STATUS.INTERNAL_ERROR).json({ 
+                        error: 'Stream error' 
+                    });
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Streaming error:', error.message);
+        res.status(HTTP_STATUS.INTERNAL_ERROR).json({ 
+            error: 'Failed to stream file' 
+        });
+    }
+});
+
+/**
+ * GET /files/*
+ * Serves files for download (static file serving with proper headers)
+ */
+app.get('/files/*', (req, res) => {
+    try {
+        const filePath = decodeURIComponent(req.params[0]);
+        const fullPath = path.join(CONFIG.DOWNLOADS_DIR, filePath);
+        
+        // Security: Prevent directory traversal
+        const normalizedPath = path.normalize(fullPath);
+        if (!normalizedPath.startsWith(CONFIG.DOWNLOADS_DIR)) {
+            return res.status(HTTP_STATUS.BAD_REQUEST).json({ 
+                error: 'Invalid file path' 
+            });
+        }
+        
+        // Check if file exists
+        if (!fs.existsSync(fullPath)) {
+            return res.status(HTTP_STATUS.NOT_FOUND).json({ 
+                error: 'File not found' 
+            });
+        }
+        
+        const filename = path.basename(fullPath);
+        const ext = path.extname(fullPath);
+        const mimeType = getMimeType(ext);
+        
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        
+        res.sendFile(fullPath);
+    } catch (error) {
+        console.error('File serving error:', error.message);
+        res.status(HTTP_STATUS.INTERNAL_ERROR).json({ 
+            error: 'Failed to serve file' 
+        });
+    }
+});
 
 // =============================================================================
 // API ROUTES

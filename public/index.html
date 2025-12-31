@@ -90,6 +90,53 @@
     <!-- Toast Notifications -->
     <div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
 
+    <!-- Video Player Modal -->
+    <div id="playerModal" class="modal" role="dialog" aria-labelledby="playerTitle" aria-hidden="true">
+        <div class="modal-overlay" onclick="closePlayer()"></div>
+        <div class="modal-content player-modal">
+            <div class="modal-header">
+                <h2 id="playerTitle" class="modal-title">
+                    <i class="fas fa-play-circle" aria-hidden="true"></i>
+                    <span id="playerFileName">Now Playing</span>
+                </h2>
+                <button class="modal-close" onclick="closePlayer()" aria-label="Close player">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="player-container">
+                <video 
+                    id="videoPlayer" 
+                    controls 
+                    autoplay
+                    crossorigin="anonymous"
+                    preload="metadata"
+                >
+                    Your browser does not support video playback.
+                </video>
+            </div>
+            <div class="player-controls">
+                <div class="player-info">
+                    <span id="playerFileSize"></span>
+                    <span id="playerFormat"></span>
+                </div>
+                <div class="player-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="toggleFullscreen()" title="Fullscreen">
+                        <i class="fas fa-expand"></i>
+                        Fullscreen
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="togglePictureInPicture()" title="Picture in Picture">
+                        <i class="fas fa-external-link-square-alt"></i>
+                        PiP
+                    </button>
+                    <a id="playerDownloadBtn" href="#" class="btn btn-success btn-sm" download>
+                        <i class="fas fa-download"></i>
+                        Download
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>
 </body>
