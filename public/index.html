@@ -3,9 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Download torrents via magnet links directly in your browser">
+    <meta name="theme-color" content="#6366f1">
     <title>Torrent Downloader</title>
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" 
+          integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" 
+          crossorigin="anonymous" 
+          referrerpolicy="no-referrer">
 </head>
 <body>
     <div class="container">
@@ -19,37 +24,45 @@
         </header>
 
         <!-- Add Magnet Link Section -->
-        <section class="add-torrent">
-            <div class="input-group">
-                <i class="fas fa-link"></i>
-                <input type="text" id="magnetInput" placeholder="Paste magnet link here..." autocomplete="off">
-                <button id="addButton" class="btn btn-primary">
-                    <i class="fas fa-download"></i>
+        <section class="add-torrent" aria-label="Add new torrent">
+            <form id="magnetForm" class="input-group" onsubmit="return false;">
+                <label for="magnetInput" class="visually-hidden">Magnet Link</label>
+                <i class="fas fa-link" aria-hidden="true"></i>
+                <input 
+                    type="text" 
+                    id="magnetInput" 
+                    placeholder="Paste magnet link here..." 
+                    autocomplete="off"
+                    aria-describedby="errorMessage"
+                    spellcheck="false"
+                >
+                <button id="addButton" type="submit" class="btn btn-primary">
+                    <i class="fas fa-download" aria-hidden="true"></i>
                     <span>Add Torrent</span>
                 </button>
-            </div>
-            <div id="errorMessage" class="error-message"></div>
+            </form>
+            <div id="errorMessage" class="error-message" role="alert" aria-live="polite"></div>
         </section>
 
         <!-- Tabs -->
-        <div class="tabs">
-            <button class="tab active" data-tab="downloads">
-                <i class="fas fa-cloud-download-alt"></i>
+        <nav class="tabs" role="tablist" aria-label="Content sections">
+            <button class="tab active" data-tab="downloads" role="tab" aria-selected="true" aria-controls="downloadsTab">
+                <i class="fas fa-cloud-download-alt" aria-hidden="true"></i>
                 Active Downloads
-                <span class="badge" id="downloadCount">0</span>
+                <span class="badge" id="downloadCount" aria-label="Download count">0</span>
             </button>
-            <button class="tab" data-tab="files">
-                <i class="fas fa-folder-open"></i>
+            <button class="tab" data-tab="files" role="tab" aria-selected="false" aria-controls="filesTab">
+                <i class="fas fa-folder-open" aria-hidden="true"></i>
                 My Files
-                <span class="badge" id="fileCount">0</span>
+                <span class="badge" id="fileCount" aria-label="File count">0</span>
             </button>
-        </div>
+        </nav>
 
         <!-- Downloads Tab -->
-        <section id="downloadsTab" class="tab-content active">
-            <div id="downloadsList" class="downloads-list">
+        <section id="downloadsTab" class="tab-content active" role="tabpanel" aria-labelledby="downloads-tab">
+            <div id="downloadsList" class="downloads-list" aria-live="polite">
                 <div class="empty-state">
-                    <i class="fas fa-cloud-download-alt"></i>
+                    <i class="fas fa-cloud-download-alt" aria-hidden="true"></i>
                     <h3>No active downloads</h3>
                     <p>Paste a magnet link above to start downloading</p>
                 </div>
@@ -57,16 +70,16 @@
         </section>
 
         <!-- Files Tab -->
-        <section id="filesTab" class="tab-content">
+        <section id="filesTab" class="tab-content" role="tabpanel" aria-labelledby="files-tab">
             <div class="files-header">
-                <button id="refreshFiles" class="btn btn-secondary">
-                    <i class="fas fa-sync-alt"></i>
+                <button id="refreshFiles" class="btn btn-secondary" aria-label="Refresh file list">
+                    <i class="fas fa-sync-alt" aria-hidden="true"></i>
                     Refresh
                 </button>
             </div>
-            <div id="filesList" class="files-list">
+            <div id="filesList" class="files-list" aria-live="polite">
                 <div class="empty-state">
-                    <i class="fas fa-folder-open"></i>
+                    <i class="fas fa-folder-open" aria-hidden="true"></i>
                     <h3>No files yet</h3>
                     <p>Completed downloads will appear here</p>
                 </div>
@@ -75,7 +88,7 @@
     </div>
 
     <!-- Toast Notifications -->
-    <div id="toastContainer" class="toast-container"></div>
+    <div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>

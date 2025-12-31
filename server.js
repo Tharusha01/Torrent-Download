@@ -1,3 +1,13 @@
+/**
+ * Torrent Downloader Server
+ * 
+ * A web application server for downloading torrents via magnet links.
+ * Uses WebTorrent for P2P downloads and Socket.io for real-time updates.
+ * 
+ * @author Tharusha
+ * @version 1.0.0
+ */
+
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
@@ -7,284 +17,547 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
 
+// =============================================================================
+// CONFIGURATION
+// =============================================================================
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
-
-// Initialize WebTorrent client
-const client = new WebTorrent();
-
-// Store active downloads
-const downloads = new Map();
-
-// Downloads directory
-const DOWNLOADS_DIR = path.join(__dirname, 'downloads');
-
-// Ensure downloads directory exists
-if (!fs.existsSync(DOWNLOADS_DIR)) {
-    fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
-}
-
-// Middleware
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Serve downloaded files
-app.use('/files', express.static(DOWNLOADS_DIR));
-
-// API Routes
-
-// Get all downloads status
-app.get('/api/downloads', (req, res) => {
-    const downloadsList = [];
-    downloads.forEach((download, id) => {
-        downloadsList.push({
-            id,
-            name: download.name,
-            progress: download.progress,
-            downloadSpeed: download.downloadSpeed,
-            uploadSpeed: download.uploadSpeed,
-            peers: download.peers,
-            status: download.status,
-            files: download.files,
-            size: download.size,
-            downloaded: download.downloaded
-        });
-    });
-    res.json(downloadsList);
+/** Server configuration constants */
+const CONFIG = Object.freeze({
+    PORT: process.env.PORT || 3000,
+    DOWNLOADS_DIR: path.join(__dirname, 'downloads'),
+    PROGRESS_UPDATE_INTERVAL: 1000, // ms
+    MAX_MAGNET_LENGTH: 2000,
 });
 
-// Add new magnet link
+/** HTTP status codes */
+const HTTP_STATUS = Object.freeze({
+    OK: 200,
+    BAD_REQUEST: 400,
+    NOT_FOUND: 404,
+    INTERNAL_ERROR: 500,
+});
+
+// =============================================================================
+// INITIALIZATION
+// =============================================================================
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: process.env.CORS_ORIGIN || '*',
+    },
+});
+
+/** WebTorrent client instance */
+const torrentClient = new WebTorrent();
+
+/** Map to store active downloads */
+const activeDownloads = new Map();
+
+/** Map to store progress intervals for cleanup */
+const progressIntervals = new Map();
+
+// Ensure downloads directory exists
+if (!fs.existsSync(CONFIG.DOWNLOADS_DIR)) {
+    fs.mkdirSync(CONFIG.DOWNLOADS_DIR, { recursive: true });
+}
+
+// =============================================================================
+// MIDDLEWARE
+// =============================================================================
+
+app.use(express.json({ limit: '10kb' }));
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/files', express.static(CONFIG.DOWNLOADS_DIR));
+
+// Security headers middleware
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    next();
+});
+
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+/**
+ * Validates a magnet link format
+ * @param {string} magnetLink - The magnet link to validate
+ * @returns {boolean} True if valid, false otherwise
+ */
+function isValidMagnetLink(magnetLink) {
+    if (!magnetLink || typeof magnetLink !== 'string') {
+        return false;
+    }
+    
+    if (magnetLink.length > CONFIG.MAX_MAGNET_LENGTH) {
+        return false;
+    }
+    
+    return magnetLink.startsWith('magnet:?');
+}
+
+/**
+ * Serializes a download object for client transmission
+ * @param {string} id - Download ID
+ * @param {Object} download - Download object
+ * @returns {Object} Serialized download data
+ */
+function serializeDownload(id, download) {
+    return {
+        id,
+        name: download.name,
+        progress: download.progress,
+        downloadSpeed: download.downloadSpeed,
+        uploadSpeed: download.uploadSpeed,
+        peers: download.peers,
+        status: download.status,
+        files: download.files,
+        size: download.size,
+        downloaded: download.downloaded,
+        error: download.error || null,
+    };
+}
+
+/**
+ * Gets all downloads as a serialized array
+ * @returns {Array} Array of serialized downloads
+ */
+function getAllDownloads() {
+    const downloadsList = [];
+    
+    activeDownloads.forEach((download, id) => {
+        downloadsList.push(serializeDownload(id, download));
+    });
+    
+    return downloadsList;
+}
+
+/**
+ * Recursively walks a directory and collects file information
+ * @param {string} dir - Directory path
+ * @param {string} basePath - Base path for relative paths
+ * @returns {Array} Array of file objects
+ */
+function walkDirectory(dir, basePath = '') {
+    const files = [];
+    
+    try {
+        const items = fs.readdirSync(dir);
+        
+        for (const item of items) {
+            const fullPath = path.join(dir, item);
+            const relativePath = path.join(basePath, item);
+            
+            try {
+                const stat = fs.statSync(fullPath);
+                
+                if (stat.isDirectory()) {
+                    files.push(...walkDirectory(fullPath, relativePath));
+                } else {
+                    files.push({
+                        name: item,
+                        path: relativePath,
+                        size: stat.size,
+                        downloadUrl: `/files/${encodeURIComponent(relativePath).replace(/%5C/g, '/')}`,
+                    });
+                }
+            } catch (statError) {
+                console.error(`Error reading file stats: ${fullPath}`, statError.message);
+            }
+        }
+    } catch (readError) {
+        console.error(`Error reading directory: ${dir}`, readError.message);
+    }
+    
+    return files;
+}
+
+/**
+ * Cleans up resources for a download
+ * @param {string} downloadId - Download ID to cleanup
+ */
+function cleanupDownload(downloadId) {
+    const interval = progressIntervals.get(downloadId);
+    
+    if (interval) {
+        clearInterval(interval);
+        progressIntervals.delete(downloadId);
+    }
+}
+
+/**
+ * Creates a new download entry
+ * @param {Object} torrent - WebTorrent torrent object
+ * @returns {Object} Download entry object
+ */
+function createDownloadEntry(torrent) {
+    return {
+        torrent,
+        name: 'Loading metadata...',
+        progress: 0,
+        downloadSpeed: 0,
+        uploadSpeed: 0,
+        peers: 0,
+        status: 'downloading',
+        files: [],
+        size: 0,
+        downloaded: 0,
+        error: null,
+    };
+}
+
+// =============================================================================
+// TORRENT EVENT HANDLERS
+// =============================================================================
+
+/**
+ * Sets up event handlers for a torrent
+ * @param {string} downloadId - Download ID
+ * @param {Object} torrent - WebTorrent torrent object
+ */
+function setupTorrentEventHandlers(downloadId, torrent) {
+    // Metadata received - torrent info is available
+    torrent.on('metadata', () => {
+        const download = activeDownloads.get(downloadId);
+        
+        if (!download) return;
+        
+        download.name = torrent.name;
+        download.size = torrent.length;
+        download.files = torrent.files.map((file) => ({
+            name: file.name,
+            size: file.length,
+            path: file.path,
+        }));
+        
+        io.emit('download-update', serializeDownload(downloadId, download));
+    });
+
+    // Download progress update
+    torrent.on('download', () => {
+        const download = activeDownloads.get(downloadId);
+        
+        if (!download) return;
+        
+        download.progress = Math.round(torrent.progress * 100);
+        download.downloadSpeed = torrent.downloadSpeed;
+        download.uploadSpeed = torrent.uploadSpeed;
+        download.peers = torrent.numPeers;
+        download.downloaded = torrent.downloaded;
+    });
+
+    // Download completed
+    torrent.on('done', () => {
+        cleanupDownload(downloadId);
+        
+        const download = activeDownloads.get(downloadId);
+        
+        if (!download) return;
+        
+        download.status = 'completed';
+        download.progress = 100;
+        download.files = torrent.files.map((file) => ({
+            name: file.name,
+            size: file.length,
+            path: file.path,
+            downloadUrl: `/files/${encodeURIComponent(file.path)}`,
+        }));
+        
+        io.emit('download-update', serializeDownload(downloadId, download));
+        console.log(`Download completed: ${download.name}`);
+    });
+
+    // Error occurred
+    torrent.on('error', (err) => {
+        cleanupDownload(downloadId);
+        
+        const download = activeDownloads.get(downloadId);
+        
+        if (!download) return;
+        
+        download.status = 'error';
+        download.error = err.message;
+        
+        io.emit('download-update', serializeDownload(downloadId, download));
+        console.error(`Download error: ${err.message}`);
+    });
+
+    // Set up progress interval for real-time updates
+    const progressInterval = setInterval(() => {
+        const download = activeDownloads.get(downloadId);
+        
+        if (download && download.status === 'downloading') {
+            io.emit('download-update', serializeDownload(downloadId, download));
+        }
+    }, CONFIG.PROGRESS_UPDATE_INTERVAL);
+    
+    progressIntervals.set(downloadId, progressInterval);
+}
+
+// =============================================================================
+// API ROUTES
+// =============================================================================
+
+/**
+ * GET /api/downloads
+ * Returns all active downloads
+ */
+app.get('/api/downloads', (req, res) => {
+    try {
+        const downloads = getAllDownloads();
+        res.status(HTTP_STATUS.OK).json(downloads);
+    } catch (error) {
+        console.error('Error fetching downloads:', error.message);
+        res.status(HTTP_STATUS.INTERNAL_ERROR).json({ 
+            error: 'Failed to fetch downloads' 
+        });
+    }
+});
+
+/**
+ * POST /api/download
+ * Adds a new torrent download via magnet link
+ */
 app.post('/api/download', (req, res) => {
     const { magnetLink } = req.body;
-    
-    if (!magnetLink || !magnetLink.startsWith('magnet:')) {
-        return res.status(400).json({ error: 'Invalid magnet link' });
+
+    // Validate magnet link
+    if (!isValidMagnetLink(magnetLink)) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({ 
+            error: 'Invalid magnet link. Must start with "magnet:?"' 
+        });
     }
 
     const downloadId = uuidv4();
-    
+
     try {
-        const torrent = client.add(magnetLink, { path: DOWNLOADS_DIR });
+        const torrent = torrentClient.add(magnetLink, { 
+            path: CONFIG.DOWNLOADS_DIR 
+        });
+
+        activeDownloads.set(downloadId, createDownloadEntry(torrent));
+        setupTorrentEventHandlers(downloadId, torrent);
+
+        res.status(HTTP_STATUS.OK).json({
+            id: downloadId,
+            message: 'Download started successfully',
+            infoHash: torrent.infoHash,
+        });
         
-        downloads.set(downloadId, {
-            torrent,
-            name: 'Loading metadata...',
-            progress: 0,
-            downloadSpeed: 0,
-            uploadSpeed: 0,
-            peers: 0,
-            status: 'downloading',
-            files: [],
-            size: 0,
-            downloaded: 0
-        });
-
-        torrent.on('metadata', () => {
-            const download = downloads.get(downloadId);
-            if (download) {
-                download.name = torrent.name;
-                download.size = torrent.length;
-                download.files = torrent.files.map(file => ({
-                    name: file.name,
-                    size: file.length,
-                    path: file.path
-                }));
-                io.emit('download-update', { id: downloadId, ...download, torrent: undefined });
-            }
-        });
-
-        torrent.on('download', () => {
-            const download = downloads.get(downloadId);
-            if (download) {
-                download.progress = Math.round(torrent.progress * 100);
-                download.downloadSpeed = torrent.downloadSpeed;
-                download.uploadSpeed = torrent.uploadSpeed;
-                download.peers = torrent.numPeers;
-                download.downloaded = torrent.downloaded;
-            }
-        });
-
-        // Send progress updates every second
-        const progressInterval = setInterval(() => {
-            const download = downloads.get(downloadId);
-            if (download && download.status === 'downloading') {
-                io.emit('download-update', { 
-                    id: downloadId, 
-                    name: download.name,
-                    progress: download.progress,
-                    downloadSpeed: download.downloadSpeed,
-                    uploadSpeed: download.uploadSpeed,
-                    peers: download.peers,
-                    status: download.status,
-                    files: download.files,
-                    size: download.size,
-                    downloaded: download.downloaded
-                });
-            }
-        }, 1000);
-
-        torrent.on('done', () => {
-            clearInterval(progressInterval);
-            const download = downloads.get(downloadId);
-            if (download) {
-                download.status = 'completed';
-                download.progress = 100;
-                download.files = torrent.files.map(file => ({
-                    name: file.name,
-                    size: file.length,
-                    path: file.path,
-                    downloadUrl: `/files/${encodeURIComponent(file.path)}`
-                }));
-                io.emit('download-update', { id: downloadId, ...download, torrent: undefined });
-            }
-        });
-
-        torrent.on('error', (err) => {
-            clearInterval(progressInterval);
-            const download = downloads.get(downloadId);
-            if (download) {
-                download.status = 'error';
-                download.error = err.message;
-                io.emit('download-update', { id: downloadId, ...download, torrent: undefined });
-            }
-        });
-
-        res.json({ 
-            id: downloadId, 
-            message: 'Download started',
-            infoHash: torrent.infoHash 
-        });
-
+        console.log(`New download started: ${downloadId}`);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Error starting download:', error.message);
+        res.status(HTTP_STATUS.INTERNAL_ERROR).json({ 
+            error: 'Failed to start download' 
+        });
     }
 });
 
-// Remove a download
+/**
+ * DELETE /api/download/:id
+ * Removes a download without deleting files
+ */
 app.delete('/api/download/:id', (req, res) => {
     const { id } = req.params;
-    const download = downloads.get(id);
-    
+    const download = activeDownloads.get(id);
+
     if (!download) {
-        return res.status(404).json({ error: 'Download not found' });
+        return res.status(HTTP_STATUS.NOT_FOUND).json({ 
+            error: 'Download not found' 
+        });
     }
 
     try {
+        cleanupDownload(id);
+        
         if (download.torrent) {
             download.torrent.destroy();
         }
-        downloads.delete(id);
-        res.json({ message: 'Download removed' });
+        
+        activeDownloads.delete(id);
+        
+        res.status(HTTP_STATUS.OK).json({ 
+            message: 'Download removed successfully' 
+        });
+        
+        console.log(`Download removed: ${id}`);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Error removing download:', error.message);
+        res.status(HTTP_STATUS.INTERNAL_ERROR).json({ 
+            error: 'Failed to remove download' 
+        });
     }
 });
 
-// Delete downloaded files
+/**
+ * DELETE /api/download/:id/files
+ * Removes a download and deletes associated files
+ */
 app.delete('/api/download/:id/files', (req, res) => {
     const { id } = req.params;
-    const download = downloads.get(id);
-    
+    const download = activeDownloads.get(id);
+
     if (!download) {
-        return res.status(404).json({ error: 'Download not found' });
+        return res.status(HTTP_STATUS.NOT_FOUND).json({ 
+            error: 'Download not found' 
+        });
     }
 
     try {
+        cleanupDownload(id);
+        
         if (download.torrent) {
-            const torrentPath = path.join(DOWNLOADS_DIR, download.name);
+            const torrentPath = path.join(CONFIG.DOWNLOADS_DIR, download.name);
+            
             download.torrent.destroy(() => {
                 // Delete files after torrent is destroyed
                 if (fs.existsSync(torrentPath)) {
                     fs.rmSync(torrentPath, { recursive: true, force: true });
+                    console.log(`Files deleted: ${torrentPath}`);
                 }
             });
         }
-        downloads.delete(id);
-        res.json({ message: 'Download and files removed' });
+        
+        activeDownloads.delete(id);
+        
+        res.status(HTTP_STATUS.OK).json({ 
+            message: 'Download and files removed successfully' 
+        });
+        
+        console.log(`Download and files removed: ${id}`);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Error removing download and files:', error.message);
+        res.status(HTTP_STATUS.INTERNAL_ERROR).json({ 
+            error: 'Failed to remove download and files' 
+        });
     }
 });
 
-// Get list of completed files available for download
+/**
+ * GET /api/files
+ * Returns list of all downloaded files
+ */
 app.get('/api/files', (req, res) => {
-    const files = [];
-    
-    function walkDir(dir, basePath = '') {
-        const items = fs.readdirSync(dir);
-        items.forEach(item => {
-            const fullPath = path.join(dir, item);
-            const relativePath = path.join(basePath, item);
-            const stat = fs.statSync(fullPath);
-            
-            if (stat.isDirectory()) {
-                walkDir(fullPath, relativePath);
-            } else {
-                files.push({
-                    name: item,
-                    path: relativePath,
-                    size: stat.size,
-                    downloadUrl: `/files/${encodeURIComponent(relativePath).replace(/%5C/g, '/')}`
-                });
-            }
+    try {
+        let files = [];
+        
+        if (fs.existsSync(CONFIG.DOWNLOADS_DIR)) {
+            files = walkDirectory(CONFIG.DOWNLOADS_DIR);
+        }
+        
+        res.status(HTTP_STATUS.OK).json(files);
+    } catch (error) {
+        console.error('Error listing files:', error.message);
+        res.status(HTTP_STATUS.INTERNAL_ERROR).json({ 
+            error: 'Failed to list files' 
         });
     }
-    
-    if (fs.existsSync(DOWNLOADS_DIR)) {
-        walkDir(DOWNLOADS_DIR);
-    }
-    
-    res.json(files);
 });
 
-// Socket.io connection
+/**
+ * GET /api/health
+ * Health check endpoint
+ */
+app.get('/api/health', (req, res) => {
+    res.status(HTTP_STATUS.OK).json({
+        status: 'healthy',
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString(),
+    });
+});
+
+// =============================================================================
+// SOCKET.IO HANDLERS
+// =============================================================================
+
 io.on('connection', (socket) => {
-    console.log('Client connected');
-    
+    console.log(`Client connected: ${socket.id}`);
+
     // Send current downloads status to newly connected client
-    const downloadsList = [];
-    downloads.forEach((download, id) => {
-        downloadsList.push({
-            id,
-            name: download.name,
-            progress: download.progress,
-            downloadSpeed: download.downloadSpeed,
-            uploadSpeed: download.uploadSpeed,
-            peers: download.peers,
-            status: download.status,
-            files: download.files,
-            size: download.size,
-            downloaded: download.downloaded
-        });
-    });
-    socket.emit('downloads-list', downloadsList);
-    
+    socket.emit('downloads-list', getAllDownloads());
+
     socket.on('disconnect', () => {
-        console.log('Client disconnected');
+        console.log(`Client disconnected: ${socket.id}`);
+    });
+
+    socket.on('error', (error) => {
+        console.error(`Socket error: ${error.message}`);
     });
 });
 
-// Error handling
-client.on('error', (err) => {
-    console.error('WebTorrent error:', err.message);
+// =============================================================================
+// ERROR HANDLERS
+// =============================================================================
+
+// WebTorrent client error handler
+torrentClient.on('error', (err) => {
+    console.error('WebTorrent client error:', err.message);
 });
+
+// Global error handler for uncaught exceptions
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception:', err.message);
+    gracefulShutdown();
+});
+
+// Global error handler for unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled rejection at:', promise, 'reason:', reason);
+});
+
+// =============================================================================
+// SERVER LIFECYCLE
+// =============================================================================
+
+/**
+ * Gracefully shuts down the server
+ */
+function gracefulShutdown() {
+    console.log('\nInitiating graceful shutdown...');
+
+    // Clear all progress intervals
+    progressIntervals.forEach((interval, id) => {
+        clearInterval(interval);
+        console.log(`Cleared interval for: ${id}`);
+    });
+    progressIntervals.clear();
+
+    // Destroy WebTorrent client
+    torrentClient.destroy(() => {
+        console.log('WebTorrent client destroyed');
+        
+        server.close(() => {
+            console.log('HTTP server closed');
+            process.exit(0);
+        });
+    });
+
+    // Force exit after timeout
+    setTimeout(() => {
+        console.error('Forced shutdown after timeout');
+        process.exit(1);
+    }, 10000);
+}
+
+// Handle shutdown signals
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);
 
 // Start server
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`🚀 Torrent Downloader running at http://localhost:${PORT}`);
-    console.log(`📁 Downloads will be saved to: ${DOWNLOADS_DIR}`);
+server.listen(CONFIG.PORT, () => {
+    console.log('='.repeat(50));
+    console.log('🚀 Torrent Downloader Server');
+    console.log('='.repeat(50));
+    console.log(`📡 Server running at: http://localhost:${CONFIG.PORT}`);
+    console.log(`📁 Downloads directory: ${CONFIG.DOWNLOADS_DIR}`);
+    console.log(`🕐 Started at: ${new Date().toISOString()}`);
+    console.log('='.repeat(50));
 });
 
-// Graceful shutdown
-process.on('SIGINT', () => {
-    console.log('\nShutting down...');
-    client.destroy(() => {
-        console.log('WebTorrent client destroyed');
-        process.exit(0);
-    });
-});
+export default app;
